@@ -10,12 +10,22 @@ dependencies = [
     "apscheduler>=3.10",
     "httpx>=0.27",
     "pydantic-settings>=2.5",
+    "yahoo-fantasy-api>=2.12.3",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8.3",
     "httpx>=0.27",
+    "respx>=0.23.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+    # objectpath (a yahoo-fantasy-api dependency) is full of `is` vs `==`
+    # comparisons against int literals; nothing we can fix from here.
+    "ignore::SyntaxWarning",
 ]
 
 [build-system]
