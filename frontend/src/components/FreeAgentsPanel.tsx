@@ -16,7 +16,19 @@ const POSITION_OPTIONS: { value: string; label: string }[] = [
   { value: 'DEF', label: 'DEF' },
 ]
 
-type SortKey = 'week_points' | 'ros_points' | 'ppg' | 'vor' | 'trade_value' | 'week_delta'
+type SortKey =
+  | 'full_name'
+  | 'position'
+  | 'week_points'
+  | 'ros_points'
+  | 'ppg'
+  | 'vor'
+  | 'trade_value'
+  | 'week_delta'
+  | 'my_worst_starter_delta'
+  | 'trending_add'
+
+const STRING_KEYS: SortKey[] = ['full_name', 'position']
 
 function formatNum(n: number | null | undefined): string {
   if (n === null || n === undefined) return '—'
@@ -76,11 +88,18 @@ export function FreeAgentsPanel({ leagueKey }: { leagueKey: string }) {
     const withProjection = rows.filter((r) => r.has_projection)
     const withoutProjection = rows.filter((r) => !r.has_projection)
     const dir = sortDir === 'asc' ? 1 : -1
-    withProjection.sort((a, b) => {
-      const av = a[sortKey] ?? -Infinity
-      const bv = b[sortKey] ?? -Infinity
+    const compare = (a: typeof withProjection[number], b: typeof withProjection[number]) => {
+      if (STRING_KEYS.includes(sortKey)) {
+        const av = String(a[sortKey] ?? '')
+        const bv = String(b[sortKey] ?? '')
+        return av.localeCompare(bv) * dir
+      }
+      const av = (a[sortKey] as number | null) ?? -Infinity
+      const bv = (b[sortKey] as number | null) ?? -Infinity
       return (av - bv) * dir
-    })
+    }
+    withProjection.sort(compare)
+    withoutProjection.sort(compare)
     return [...withProjection, ...withoutProjection]
   }, [rows, sortKey, sortDir])
 
@@ -89,7 +108,7 @@ export function FreeAgentsPanel({ leagueKey }: { leagueKey: string }) {
       setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
     } else {
       setSortKey(key)
-      setSortDir('desc')
+      setSortDir(STRING_KEYS.includes(key) ? 'asc' : 'desc')
     }
   }
 
@@ -173,16 +192,16 @@ export function FreeAgentsPanel({ leagueKey }: { leagueKey: string }) {
           <table className="data-table">
             <thead>
               <tr>
-                <th>Player</th>
-                <th>Pos</th>
+                <th>{sortHeader('full_name', 'Player')}</th>
+                <th>{sortHeader('position', 'Pos')}</th>
                 <th>{sortHeader('week_points', weekPtsLabel)}</th>
                 <th>{sortHeader('ros_points', 'ROS Pts')}</th>
                 <th>{sortHeader('ppg', 'PPG')}</th>
                 <th>{sortHeader('vor', 'VOR')}</th>
                 <th>{sortHeader('week_delta', 'Wk vs starters')}</th>
-                <th>ROS vs starters</th>
+                <th>{sortHeader('my_worst_starter_delta', 'ROS vs starters')}</th>
                 <th>{sortHeader('trade_value', 'Value')}</th>
-                <th>Trending</th>
+                <th>{sortHeader('trending_add', 'Trending')}</th>
               </tr>
             </thead>
             <tbody>
