@@ -3,12 +3,16 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+import app.models  # noqa: F401  (register models with Base before create_all)
+from app.db import Base, engine
 from app.routers import health
 
 FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
 
 
 def create_app() -> FastAPI:
+    Base.metadata.create_all(bind=engine)
+
     app = FastAPI(title="Gridiron HQ", version="0.1.0")
 
     app.include_router(health.router)
