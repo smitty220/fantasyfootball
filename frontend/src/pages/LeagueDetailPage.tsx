@@ -1,0 +1,287 @@
+import { useEffect, useState } from 'react'
+import type { FormEvent } from 'react'
+import { Link, useParams } from 'react-router-dom'
+import { createTeam, deleteTeam, getLeagues, getTeams, updateTeam } from '../api/endpoints'
+import type { League, Team } from '../api/types'
+import { ApiError } from '../api/client'
+import { Badge, Button, Card, EmptyState, Spinner, TextField } from '../components/ui'
+import { useToast } from '../components/toastContext'
+import { RosterEditor } from '../components/RosterEditor'
+import { FreeAgentsPanel } from '../components/FreeAgentsPanel'
+
+type Tab = 'teams' | 'free-agents'
+
+export function LeagueDetailPage() {
+  const { leagueKey = '' } = useParams<{ leagueKey: string }>()
+  const { showError, showSuccess } = useToast()
+
+  const [league, setLeague] = useState<League | null | undefined>(undefined)
+  const [teams, setTeams] = useState<Team[] | null>(null)
+  const [selectedTeamId, setSelectedTeamId] = useState<number | null>(null)
+  const [tab, setTab] = useState<Tab>('teams')
+  const [editingTeamId, setEditingTeamId] = useState<number | null>(null)
+  const [editName, setEditName] = useState('')
+  const [showAddForm, setShowAddForm] = useState(false)
+  const [newTeamName, setNewTeamName] = useState('')
+  const [newManagerName, setNewManagerName] = useState('')
+  const [busyTeamId, setBusyTeamId] = useState<number | null>(null)
+  const [addingTeam, setAddingTeam] = useState(false)
+
+  function loadTeams() {
+    getTeams(leagueKey)
+      .then(setTeams)
+      .catch((err: unknown) => {
+        setTeams([])
+        showError(err instanceof ApiError ? err.message : 'Failed to load teams')
+      })
+  }
+
+  useEffect(() => {
+    getLeagues()
+      .then((leagues) => {
+        setLeague(leagues.find((l) => l.league_key === leagueKey) ?? null)
+      })
+      .catch((err: unknown) => {
+        setLeague(null)
+        showError(err instanceof ApiError ? err.message : 'Failed to load league')
+      })
+    loadTeams()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leagueKey])
+
+  const isManual = league?.source === 'manual'
+
+  async function handleAddTeam(e: FormEvent) {
+    e.preventDefault()
+    if (!newTeamName.trim()) return
+    setAddingTeam(true)
+    try {
+      await createTeam(leagueKey, { name: newTeamName.trim(), manager_name: newManagerName.trim() || undefined })
+      showSuccess('Team added')
+      setNewTeamName('')
+      setNewManagerName('')
+      setShowAddForm(false)
+      loadTeams()
+    } catch (err) {
+      showError(err instanceof ApiError ? err.message : 'Failed to add team')
+    } finally {
+      setAddingTeam(false)
+    }
+  }
+
+  async function handleRename(team: Team) {
+    if (!editName.trim() || editName.trim() === team.name) {
+      setEditingTeamId(null)
+      return
+    }
+    setBusyTeamId(team.id)
+    try {
+      await updateTeam(team.id, { name: editName.trim() })
+      showSuccess('Team renamed')
+      setEditingTeamId(null)
+      loadTeams()
+    } catch (err) {
+      showError(err instanceof ApiError ? err.message : 'Failed to rename team')
+    } finally {
+      setBusyTeamId(null)
+    }
+  }
+
+  async function handleDelete(team: Team) {
+    if (!window.confirm(`Delete team "${team.name}"? This cannot be undone.`)) return
+    setBusyTeamId(team.id)
+    try {
+      await deleteTeam(team.id)
+      showSuccess('Team deleted')
+      if (selectedTeamId === team.id) setSelectedTeamId(null)
+      loadTeams()
+    } catch (err) {
+      showError(err instanceof ApiError ? err.message : 'Failed to delete team')
+    } finally {
+      setBusyTeamId(null)
+    }
+  }
+
+  async function handleToggleMyTeam(team: Team) {
+    setBusyTeamId(team.id)
+    try {
+      await updateTeam(team.id, { is_my_team: !team.is_my_team })
+      loadTeams()
+    } catch (err) {
+      showError(err instanceof ApiError ? err.message : 'Failed to update team')
+    } finally {
+      setBusyTeamId(null)
+    }
+  }
+
+  if (league === undefined) {
+    return (
+      <div className="page loading-row">
+        <Spinner /> Loading league…
+      </div>
+    )
+  }
+
+  if (league === null) {
+    return (
+      <div className="page">
+        <EmptyState>League not found.</EmptyState>
+        <Link to="/">Back to leagues</Link>
+      </div>
+    )
+  }
+
+  const selectedTeam = teams?.find((t) => t.id === selectedTeamId) ?? null
+
+  return (
+    <div className="page">
+      <div className="page-header">
+        <div>
+          <h1>{league.name}</h1>
+          <div className="badge-row">
+            <Badge>{league.season}</Badge>
+            <Badge tone={league.source === 'manual' ? 'accent' : 'success'}>{league.source}</Badge>
+            {league.is_keeper && <Badge tone="warning">Keeper</Badge>}
+          </div>
+        </div>
+      </div>
+
+      <div className="tabs">
+        <button className={`tab${tab === 'teams' ? ' tab-active' : ''}`} onClick={() => setTab('teams')} type="button">
+          Teams
+        </button>
+        <button
+          className={`tab${tab === 'free-agents' ? ' tab-active' : ''}`}
+          onClick={() => setTab('free-agents')}
+          type="button"
+        >
+          Free agents
+        </button>
+      </div>
+
+      {tab === 'teams' && (
+        <div className="detail-grid">
+          <Card>
+            <div className="panel-header">
+              <h2>Teams</h2>
+              {isManual && (
+                <Button variant="primary" onClick={() => setShowAddForm((v) => !v)}>
+                  {showAddForm ? 'Cancel' : 'Add team'}
+                </Button>
+              )}
+            </div>
+
+            {showAddForm && (
+              <form className="inline-form" onSubmit={handleAddTeam}>
+                <TextField label="Team name" value={newTeamName} onChange={(e) => setNewTeamName(e.target.value)} />
+                <TextField
+                  label="Manager (optional)"
+                  value={newManagerName}
+                  onChange={(e) => setNewManagerName(e.target.value)}
+                />
+                <Button type="submit" variant="primary" busy={addingTeam}>
+                  Save
+                </Button>
+              </form>
+            )}
+
+            {teams === null && (
+              <div className="loading-row">
+                <Spinner /> Loading teams…
+              </div>
+            )}
+
+            {teams !== null && teams.length === 0 && <EmptyState>No teams yet.</EmptyState>}
+
+            {teams !== null && teams.length > 0 && (
+              <ul className="team-list">
+                {teams.map((team) => (
+                  <li
+                    key={team.id}
+                    className={`team-list-item${selectedTeamId === team.id ? ' team-list-item-active' : ''}`}
+                  >
+                    <button
+                      type="button"
+                      className="star-toggle"
+                      onClick={() => handleToggleMyTeam(team)}
+                      disabled={!isManual || busyTeamId === team.id}
+                      title={team.is_my_team ? 'My team' : 'Mark as my team'}
+                      aria-label={team.is_my_team ? 'My team' : 'Mark as my team'}
+                    >
+                      {team.is_my_team ? '★' : '☆'}
+                    </button>
+
+                    <div className="team-list-main" onClick={() => setSelectedTeamId(team.id)}>
+                      {editingTeamId === team.id ? (
+                        <input
+                          className="field-input"
+                          autoFocus
+                          value={editName}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => setEditName(e.target.value)}
+                          onBlur={() => handleRename(team)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleRename(team)
+                            if (e.key === 'Escape') setEditingTeamId(null)
+                          }}
+                        />
+                      ) : (
+                        <>
+                          <span className="team-name">{team.name}</span>
+                          {team.manager_name && <span className="team-manager">{team.manager_name}</span>}
+                          <span className="team-record">
+                            {team.wins}-{team.losses}
+                            {team.ties ? `-${team.ties}` : ''}
+                            {team.rank != null && ` · #${team.rank}`}
+                          </span>
+                        </>
+                      )}
+                    </div>
+
+                    {isManual && editingTeamId !== team.id && (
+                      <div className="team-actions">
+                        <Button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setEditingTeamId(team.id)
+                            setEditName(team.name)
+                          }}
+                        >
+                          Rename
+                        </Button>
+                        <Button
+                          variant="danger"
+                          busy={busyTeamId === team.id}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleDelete(team)
+                          }}
+                        >
+                          Delete
+                        </Button>
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+
+          <Card>
+            {selectedTeam ? (
+              <RosterEditor teamId={selectedTeam.id} teamName={selectedTeam.name} editable={isManual} />
+            ) : (
+              <EmptyState>Select a team to view its roster.</EmptyState>
+            )}
+          </Card>
+        </div>
+      )}
+
+      {tab === 'free-agents' && (
+        <Card>
+          <FreeAgentsPanel leagueKey={leagueKey} />
+        </Card>
+      )}
+    </div>
+  )
+}

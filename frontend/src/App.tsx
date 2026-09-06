@@ -1,41 +1,53 @@
 import { useEffect, useState } from 'react'
+import { NavLink, Route, Routes } from 'react-router-dom'
 import './App.css'
+import { getHealth } from './api/endpoints'
+import { LeaguesPage } from './pages/LeaguesPage'
+import { NewLeagueWizard } from './pages/NewLeagueWizard'
+import { LeagueDetailPage } from './pages/LeagueDetailPage'
+import { DataPage } from './pages/DataPage'
 
-interface HealthResponse {
-  status: string
-  version: string
-}
+type HealthState = 'checking' | 'ok' | 'error'
 
 function App() {
-  const [health, setHealth] = useState<HealthResponse | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [health, setHealth] = useState<HealthState>('checking')
 
   useEffect(() => {
-    fetch('/api/health')
-      .then((res) => {
-        if (!res.ok) {
-          throw new Error(`Request failed with status ${res.status}`)
-        }
-        return res.json() as Promise<HealthResponse>
-      })
-      .then(setHealth)
-      .catch((err: Error) => setError(err.message))
+    getHealth()
+      .then(() => setHealth('ok'))
+      .catch(() => setHealth('error'))
   }, [])
 
   return (
-    <main className="app">
-      <h1>Gridiron HQ</h1>
-      <p className="tagline">Your self-hosted fantasy football helper</p>
-      <div className="status">
-        {error && <span className="status-error">API error: {error}</span>}
-        {!error && !health && <span className="status-pending">Checking API status…</span>}
-        {!error && health && (
-          <span className="status-ok">
-            API status: {health.status} (v{health.version})
-          </span>
-        )}
-      </div>
-    </main>
+    <div className="app-shell">
+      <header className="app-header">
+        <div className="app-header-inner">
+          <span className="app-title">Gridiron HQ</span>
+          <nav className="app-nav">
+            <NavLink to="/" end className={({ isActive }) => (isActive ? 'nav-link nav-link-active' : 'nav-link')}>
+              Leagues
+            </NavLink>
+            <NavLink to="/data" className={({ isActive }) => (isActive ? 'nav-link nav-link-active' : 'nav-link')}>
+              Data
+            </NavLink>
+          </nav>
+        </div>
+      </header>
+
+      <main className="app-main">
+        <Routes>
+          <Route path="/" element={<LeaguesPage />} />
+          <Route path="/leagues/new" element={<NewLeagueWizard />} />
+          <Route path="/leagues/:leagueKey" element={<LeagueDetailPage />} />
+          <Route path="/data" element={<DataPage />} />
+        </Routes>
+      </main>
+
+      <footer className="app-footer">
+        <span className={`health-dot health-dot-${health}`} />
+        API: {health === 'checking' ? 'checking…' : health}
+      </footer>
+    </div>
   )
 }
 
