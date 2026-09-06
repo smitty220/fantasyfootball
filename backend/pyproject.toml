@@ -11,6 +11,7 @@ dependencies = [
     "httpx>=0.27",
     "pydantic-settings>=2.5",
     "yahoo-fantasy-api>=2.12.3",
+    "alembic>=1.19.2",
 ]
 
 [dependency-groups]

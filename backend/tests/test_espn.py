@@ -26,15 +26,17 @@ def _player_entry(
     full_name: str,
     default_position_id: int,
     stats: list[dict],
+    pro_team_id: int | None = None,
 ) -> dict:
-    return {
-        "player": {
-            "id": espn_id,
-            "fullName": full_name,
-            "defaultPositionId": default_position_id,
-            "stats": stats,
-        }
+    player: dict = {
+        "id": espn_id,
+        "fullName": full_name,
+        "defaultPositionId": default_position_id,
+        "stats": stats,
     }
+    if pro_team_id is not None:
+        player["proTeamId"] = pro_team_id
+    return {"player": player}
 
 
 def _season_stat_entry(stats: dict, season: int = SEASON) -> dict:
@@ -264,6 +266,50 @@ def test_refresh_projections_matches_by_name_and_backfills_espn_id(db_session):
 
     db_session.refresh(player)
     assert player.espn_id == "4262921"
+
+
+@respx.mock
+def test_refresh_projections_matches_dst_by_position_and_team(db_session):
+    # A Sleeper-style DEF row: full_name "Houston Texans", sleeper_id "HOU",
+    # no espn_id -- exactly what app.services.sleeper.refresh_players creates
+    # for team defenses (see that module's docstring).
+    texans_dst = Player(
+        full_name="Houston Texans",
+        position="DEF",
+        nfl_team="HOU",
+        sleeper_id="HOU",
+        espn_id=None,
+    )
+    db_session.add(texans_dst)
+    db_session.commit()
+
+    payload = {
+        "players": [
+            _player_entry(
+                -16034,
+                "Texans D/ST",
+                16,
+                [_season_stat_entry({"120": 300.0, "127": 5000.0})],
+                pro_team_id=34,
+            )
+        ]
+    }
+    respx.get(_espn_url()).mock(
+        side_effect=[httpx.Response(200, json=payload), httpx.Response(200, json={"players": []})]
+    )
+
+    result = espn.refresh_projections(db_session, SEASON, week=None)
+    assert result["matched_by_id"] == 0
+    assert result["unmatched"] == 0
+    assert result["saved"] == 1
+    assert db_session.query(Player).count() == 1
+
+    row = db_session.query(Projection).one()
+    assert row.player_id == texans_dst.id
+    assert row.stat_json == {"dst_pts_allowed": 300.0, "dst_yds_allowed": 5000.0}
+
+    db_session.refresh(texans_dst)
+    assert texans_dst.espn_id == "-16034"
 
 
 @respx.mock

@@ -79,7 +79,11 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.models import Player, Projection, SyncLog
-from app.services.matching import find_by_name_position
+from app.services.matching import (
+    find_by_name_position,
+    find_by_position_team,
+    normalize_position,
+)
 from app.services.stats import clean_stat_line
 
 logger = logging.getLogger(__name__)
@@ -104,6 +108,48 @@ _DEFAULT_POSITION_ID_TO_POSITION = {
     4: "TE",
     5: "K",
     16: "DST",
+}
+
+#: ESPN's own numeric team id (`player.proTeamId`) -> abbreviation, used only
+#: to drive the D/ST position+team matching fallback below. Verified live
+#: against all 32 current teams' D/ST entries (see module docstring). Chosen
+#: to match the abbreviations Sleeper stores on the DEF `Player` rows it
+#: creates (`nfl_team`) -- e.g. "WAS" not "WSH", "JAX" not "JAC" -- since
+#: that's the join target; any other spelling is folded in by
+#: matching.normalize_team_abbr regardless.
+_PRO_TEAM_ID_TO_ABBR = {
+    1: "ATL",
+    2: "BUF",
+    3: "CHI",
+    4: "CIN",
+    5: "CLE",
+    6: "DAL",
+    7: "DEN",
+    8: "DET",
+    9: "GB",
+    10: "TEN",
+    11: "IND",
+    12: "KC",
+    13: "LV",
+    14: "LAR",
+    15: "MIA",
+    16: "MIN",
+    17: "NE",
+    18: "NO",
+    19: "NYG",
+    20: "NYJ",
+    21: "PHI",
+    22: "ARI",
+    23: "PIT",
+    24: "LAC",
+    25: "SF",
+    26: "SEA",
+    27: "TB",
+    28: "WAS",
+    29: "CAR",
+    30: "JAX",
+    33: "BAL",
+    34: "HOU",
 }
 
 PAGE_SIZE = 200
@@ -240,7 +286,11 @@ def _fetch_page(
 
 
 def _match_player(
-    db: Session, espn_id: str | None, full_name: str | None, position: str | None
+    db: Session,
+    espn_id: str | None,
+    full_name: str | None,
+    position: str | None,
+    team_abbr: str | None = None,
 ) -> tuple[Player | None, bool]:
     """Resolve a player; returns (player, matched_by_id)."""
     if espn_id:
@@ -249,6 +299,13 @@ def _match_player(
             return player, True
 
     player = find_by_name_position(db, full_name, position)
+    if player is None and normalize_position(position) == "DST":
+        # Team defenses have no name sources agree on -- Sleeper (which
+        # creates these Player rows) calls this one "Houston Texans" with
+        # position DEF and no espn_id; ESPN's own payload calls it "Texans
+        # D/ST". Names never line up, so fall back to position + NFL team.
+        player = find_by_position_team(db, position, team_abbr)
+
     if player is not None and espn_id and not player.espn_id:
         player.espn_id = espn_id
     return player, False
@@ -315,6 +372,7 @@ def refresh_projections(db: Session, season: int, week: int | None = None) -> di
                     position = _DEFAULT_POSITION_ID_TO_POSITION.get(
                         player_payload.get("defaultPositionId")
                     )
+                    team_abbr = _PRO_TEAM_ID_TO_ABBR.get(player_payload.get("proTeamId"))
 
                     raw_stats = _select_stat_line(
                         player_payload.get("stats") or [], season, week
@@ -328,7 +386,9 @@ def refresh_projections(db: Session, season: int, week: int | None = None) -> di
                         no_projection += 1
                         continue
 
-                    player, by_id = _match_player(db, espn_id, full_name, position)
+                    player, by_id = _match_player(
+                        db, espn_id, full_name, position, team_abbr
+                    )
                     if player is None:
                         unmatched += 1
                         continue

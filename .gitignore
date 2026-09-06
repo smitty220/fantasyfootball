@@ -28,3 +28,4 @@ data/*.sqlite3
 # Editors
 .vscode/
 .idea/
+data/cache/
