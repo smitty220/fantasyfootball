@@ -26,6 +26,11 @@ const SOURCES: { id: DataSourceId; name: string; description: string }[] = [
     name: 'FantasyCalc values',
     description: 'Dynasty and redraft trade values for players and picks.',
   },
+  {
+    id: 'espn_projections',
+    name: 'ESPN projections',
+    description: 'Full-season player projections from ESPN (free, no key required).',
+  },
 ]
 
 function toneForStatus(status: string | undefined): 'neutral' | 'success' | 'warning' | 'accent' {

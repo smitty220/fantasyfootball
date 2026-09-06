@@ -29,6 +29,7 @@ class League(Base):
     current_week: Mapped[int | None] = mapped_column(Integer)
     settings_json: Mapped[dict | None] = mapped_column(JSON)
     synced_at: Mapped[datetime | None] = mapped_column(DateTime)
+    source: Mapped[str] = mapped_column(String(8), default="yahoo")
 
     teams: Mapped[list["Team"]] = relationship(back_populates="league")
 

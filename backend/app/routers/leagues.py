@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import League, LeaguePlayer, Matchup, Player, Team
+from app.models import League, LeaguePlayer, Matchup, Player, Team, TradeValue
 from app.services.yahoo import oauth, sync
 
 router = APIRouter(prefix="/api/leagues", tags=["leagues"])
@@ -135,6 +135,54 @@ def league_teams(league_key: str, db: Session = Depends(get_db)) -> list[Team]:
     )
 
 
+_FANTASY_POSITIONS = ("QB", "RB", "WR", "TE", "K", "DEF")
+
+
+def _manual_free_agents(
+    db: Session, league: League, position: str | None, limit: int
+) -> list[FreeAgentOut]:
+    """Manual leagues have no explicit FA/W rows: any fantasy-position player
+    with no LeaguePlayer row in this league at all is implicitly a free agent."""
+    rostered_ids = db.query(LeaguePlayer.player_id).filter(
+        LeaguePlayer.league_id == league.id
+    )
+
+    query = (
+        db.query(Player, TradeValue.value)
+        .outerjoin(
+            TradeValue,
+            (TradeValue.player_id == Player.id)
+            & (TradeValue.source == "fantasycalc")
+            & (TradeValue.format == "redraft"),
+        )
+        .filter(Player.position.in_(_FANTASY_POSITIONS))
+        .filter(~Player.id.in_(rostered_ids))
+    )
+    if position:
+        query = query.filter(Player.position == position.upper())
+
+    rows = (
+        query.order_by(TradeValue.value.desc().nullslast(), Player.full_name)
+        .limit(limit)
+        .all()
+    )
+
+    return [
+        FreeAgentOut(
+            player_id=player.id,
+            full_name=player.full_name,
+            position=player.position,
+            nfl_team=player.nfl_team,
+            injury_status=player.injury_status,
+            bye_week=player.bye_week,
+            yahoo_id=player.yahoo_id,
+            status="FA",
+            percent_owned=None,
+        )
+        for player, _value in rows
+    ]
+
+
 @router.get("/{league_key}/free-agents", response_model=list[FreeAgentOut])
 def league_free_agents(
     league_key: str,
@@ -143,6 +191,9 @@ def league_free_agents(
     db: Session = Depends(get_db),
 ) -> list[FreeAgentOut]:
     league = _get_league(db, league_key)
+
+    if league.source == "manual":
+        return _manual_free_agents(db, league, position, limit)
 
     query = (
         db.query(LeaguePlayer, Player)

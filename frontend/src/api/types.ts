@@ -95,7 +95,12 @@ export interface FreeAgent {
   [key: string]: unknown
 }
 
-export type DataSourceId = 'crosswalk' | 'sleeper_players' | 'sleeper_trending' | 'fantasycalc'
+export type DataSourceId =
+  | 'crosswalk'
+  | 'sleeper_players'
+  | 'sleeper_trending'
+  | 'fantasycalc'
+  | 'espn_projections'
 
 export interface DataRefreshResult {
   resource: string

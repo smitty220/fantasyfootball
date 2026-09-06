@@ -362,3 +362,10 @@ def refresh_projections(db: Session, season: int, week: int | None = None) -> di
             "unmatched": unmatched,
             "no_projection": no_projection,
         }
+
+
+def refresh_season_projections(db: Session) -> dict:
+    """Registry-friendly wrapper: full-season projections for the current season."""
+    from app.services.yahoo.sync import current_nfl_season
+
+    return refresh_projections(db, current_nfl_season(), week=None)
