@@ -33,9 +33,11 @@ def test_get_authorize_url(yahoo_credentials):
     params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
 
     assert url.startswith("https://api.login.yahoo.com/oauth2/request_auth?")
+    from app.config import settings
+
     assert params == {
         "client_id": "test-client-id",
-        "redirect_uri": "oob",
+        "redirect_uri": settings.YAHOO_REDIRECT_URI,
         "response_type": "code",
     }
 
@@ -66,8 +68,10 @@ def test_exchange_code_stores_token(db_session, yahoo_credentials):
 
     assert route.called
     form = _form(route.calls.last.request)
+    from app.config import settings
+
     assert form["grant_type"] == "authorization_code"
-    assert form["redirect_uri"] == "oob"
+    assert form["redirect_uri"] == settings.YAHOO_REDIRECT_URI
     assert form["code"] == "the-code"
     assert _basic_auth(route.calls.last.request) == (
         "test-client-id",

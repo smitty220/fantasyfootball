@@ -1,8 +1,14 @@
-"""Yahoo OAuth2 (authorization-code, out-of-band redirect).
+"""Yahoo OAuth2 (authorization-code flow).
 
 Implemented in-house with httpx so that *we* own token storage: Yahoo rotates
 the refresh token on every refresh, and both halves of the new pair must be
 persisted before the old one is discarded.
+
+The redirect URI is configurable (``YAHOO_REDIRECT_URI``) and must exactly
+match the one registered on the Yahoo app. When the redirect target isn't
+actually reachable (e.g. ``https://localhost`` with no TLS), the owner can
+copy the ``code`` query param from the browser address bar and paste it into
+the app instead — both paths land in :func:`exchange_code`.
 """
 
 from __future__ import annotations
@@ -22,7 +28,6 @@ logger = logging.getLogger(__name__)
 PROVIDER = "yahoo"
 AUTHORIZE_URL = "https://api.login.yahoo.com/oauth2/request_auth"
 TOKEN_URL = "https://api.login.yahoo.com/oauth2/get_token"
-REDIRECT_URI = "oob"
 
 #: Refresh this many seconds before the token actually expires.
 EXPIRY_SKEW_SECONDS = 60
@@ -57,14 +62,15 @@ def _require_credentials() -> tuple[str, str]:
 def get_authorize_url() -> str:
     """Build the URL the owner opens to approve the app.
 
-    Yahoo's out-of-band flow shows a code on screen that the owner pastes back
-    into the app (see :func:`exchange_code`).
+    Yahoo redirects to ``YAHOO_REDIRECT_URI`` with a ``code`` query param; if
+    that URI isn't reachable, the owner copies the code from the address bar
+    and pastes it into the app (see :func:`exchange_code`).
     """
     client_id, _ = _require_credentials()
     query = urlencode(
         {
             "client_id": client_id,
-            "redirect_uri": REDIRECT_URI,
+            "redirect_uri": settings.YAHOO_REDIRECT_URI,
             "response_type": "code",
         }
     )
@@ -133,7 +139,7 @@ def exchange_code(code: str, db: Session) -> OAuthToken:
     payload = _post_token_request(
         {
             "grant_type": "authorization_code",
-            "redirect_uri": REDIRECT_URI,
+            "redirect_uri": settings.YAHOO_REDIRECT_URI,
             "code": code,
         }
     )
@@ -155,7 +161,7 @@ def refresh_token(db: Session, token: OAuthToken | None = None) -> OAuthToken:
     payload = _post_token_request(
         {
             "grant_type": "refresh_token",
-            "redirect_uri": REDIRECT_URI,
+            "redirect_uri": settings.YAHOO_REDIRECT_URI,
             "refresh_token": token.refresh_token,
         }
     )

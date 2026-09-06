@@ -29,7 +29,7 @@ def test_start_returns_authorize_url(client, yahoo_credentials):
     assert body["authorize_url"].startswith(
         "https://api.login.yahoo.com/oauth2/request_auth?"
     )
-    assert "redirect_uri=oob" in body["authorize_url"]
+    assert "redirect_uri=" in body["authorize_url"]
     assert "client_id=test-client-id" in body["authorize_url"]
 
 

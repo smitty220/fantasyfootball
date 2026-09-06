@@ -40,9 +40,14 @@ name mapping lives in code (it is static per sport).
 ## Yahoo auth
 
 OAuth2 authorization-code flow, implemented in-house (small surface, and we must own
-token storage): the owner clicks "Connect Yahoo" in the UI, opens Yahoo's authorize
-URL, and pastes the resulting code back into the app (out-of-band flow — most reliable
-with Yahoo's installed-app registration). Tokens live in the `oauth_tokens` table.
+token storage): the owner clicks "Connect Yahoo" in the UI and opens Yahoo's authorize
+URL. Yahoo redirects to the registered `YAHOO_REDIRECT_URI` (a real https URI —
+Yahoo removed the out-of-band flow for apps created after ~Oct 2025); when that URI
+isn't reachable locally, the owner pastes the `code` from the address bar into the
+app instead. NOTE (Sept 2026): Yahoo now also requires per-app approval for Fantasy
+Sports data via sports.yahoo.com/developer/access/ — creating the app alone is not
+enough, and approval reportedly takes days to weeks. Tokens live in the
+`oauth_tokens` table.
 Yahoo rotates the refresh token on every refresh, so every refresh persists the new
 pair transactionally before the old one is discarded. Parsing of Yahoo responses is
 delegated to the `yahoo_fantasy_api` library via a thin session adapter, because
