@@ -28,6 +28,7 @@ class LeagueOut(BaseModel):
     scoring_type: str | None = None
     current_week: int | None = None
     synced_at: datetime | None = None
+    source: str = "yahoo"
 
 
 class TeamOut(BaseModel):
