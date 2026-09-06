@@ -114,6 +114,27 @@ def make_player(
     return player
 
 
+def set_week_points(
+    db,
+    player: Player,
+    points: float,
+    *,
+    week: int = 1,
+    source: str = "espn",
+) -> None:
+    """A single-week projection worth exactly ``points`` in half-PPR."""
+    db.add(
+        Projection(
+            player_id=player.id,
+            source=source,
+            season=SEASON,
+            week=week,
+            stat_json={"rush_yds": points * 10},
+            fetched_at=_utcnow(),
+        )
+    )
+
+
 def roster(db, league: League, team: Team, *players: Player) -> None:
     for player in players:
         db.add(
@@ -411,7 +432,7 @@ def fa_league(db_session):
 
 def test_free_agents_exclude_rostered_players(fa_league, db_session):
     league, _ = fa_league
-    rows = evaluator.evaluate_free_agents(db_session, league, season=SEASON)
+    rows = evaluator.evaluate_free_agents(db_session, league, season=SEASON)["rows"]
     names = {row["full_name"] for row in rows}
     assert "My RB" not in names
     assert "Rival RB" not in names
@@ -420,7 +441,7 @@ def test_free_agents_exclude_rostered_players(fa_league, db_session):
 
 def test_free_agents_sorted_by_vor_with_projected_players_first(fa_league, db_session):
     league, _ = fa_league
-    rows = evaluator.evaluate_free_agents(db_session, league, season=SEASON)
+    rows = evaluator.evaluate_free_agents(db_session, league, season=SEASON)["rows"]
 
     assert [row["full_name"] for row in rows[:3]] == [
         "Backup QB",
@@ -437,7 +458,9 @@ def test_free_agent_row_carries_points_value_and_trend(fa_league, db_session):
     league, _ = fa_league
     rows = {
         row["full_name"]: row
-        for row in evaluator.evaluate_free_agents(db_session, league, season=SEASON)
+        for row in evaluator.evaluate_free_agents(db_session, league, season=SEASON)[
+            "rows"
+        ]
     }
 
     hot_rb = rows["Hot RB"]
@@ -455,7 +478,9 @@ def test_free_agent_vor_subtracts_positional_replacement(fa_league, db_session):
     levels = evaluator.replacement_levels(db_session, league, SEASON)
     rows = {
         row["full_name"]: row
-        for row in evaluator.evaluate_free_agents(db_session, league, season=SEASON)
+        for row in evaluator.evaluate_free_agents(db_session, league, season=SEASON)[
+            "rows"
+        ]
     }
     assert rows["Hot RB"]["vor"] == round(100.0 - levels["RB"], 1)
 
@@ -466,7 +491,9 @@ def test_my_worst_starter_delta_uses_flex_pool_for_flex_positions(
     league, _ = fa_league
     rows = {
         row["full_name"]: row
-        for row in evaluator.evaluate_free_agents(db_session, league, season=SEASON)
+        for row in evaluator.evaluate_free_agents(db_session, league, season=SEASON)[
+            "rows"
+        ]
     }
 
     # My starters: QB 300, RB 150, WR 120, FLEX = TE 60. The worst
@@ -487,7 +514,7 @@ def test_my_worst_starter_delta_is_null_without_my_team(db_session):
     make_player(db_session, "Free RB", "RB", 100)
     db_session.commit()
 
-    rows = evaluator.evaluate_free_agents(db_session, league, season=SEASON)
+    rows = evaluator.evaluate_free_agents(db_session, league, season=SEASON)["rows"]
     assert all(row["my_worst_starter_delta"] is None for row in rows)
 
 
@@ -495,12 +522,12 @@ def test_free_agents_position_filter_and_limit(fa_league, db_session):
     league, _ = fa_league
     rbs = evaluator.evaluate_free_agents(
         db_session, league, position="rb", season=SEASON
-    )
+    )["rows"]
     assert [row["full_name"] for row in rbs] == ["Hot RB"]
 
     limited = evaluator.evaluate_free_agents(
         db_session, league, limit=2, season=SEASON
-    )
+    )["rows"]
     assert len(limited) == 2
 
 
@@ -535,10 +562,387 @@ def test_free_agents_for_yahoo_league_uses_status_rows(db_session):
 
     names = {
         row["full_name"]
-        for row in evaluator.evaluate_free_agents(db_session, league, season=SEASON)
+        for row in evaluator.evaluate_free_agents(db_session, league, season=SEASON)[
+            "rows"
+        ]
     }
     assert names == {"Yahoo FA", "Yahoo Waiver"}
     assert unlisted.full_name not in names
+
+
+# --- current projection week -----------------------------------------------
+
+
+def test_current_projection_week_is_none_without_weekly_rows(db_session):
+    make_player(db_session, "Season Only", "RB", 200)
+    db_session.commit()
+    assert evaluator.current_projection_week(db_session, SEASON) is None
+
+
+def test_current_projection_week_is_the_latest_week_on_file(db_session):
+    player = make_player(db_session, "Weekly Guy", "RB", 200)
+    set_week_points(db_session, player, 12, week=2)
+    set_week_points(db_session, player, 14, week=3)
+    db_session.commit()
+    assert evaluator.current_projection_week(db_session, SEASON) == 3
+
+
+def test_current_projection_week_ignores_other_seasons_and_sources(db_session):
+    player = make_player(db_session, "Weekly Guy", "RB", 200)
+    set_week_points(db_session, player, 12, week=3)
+    # A source we never score from must not advance the week...
+    set_week_points(db_session, player, 30, week=9, source="sleeper")
+    # ...nor may another season's rows.
+    db_session.add(
+        Projection(
+            player_id=player.id,
+            source="espn",
+            season=SEASON - 1,
+            week=17,
+            stat_json={"rush_yds": 100},
+            fetched_at=_utcnow(),
+        )
+    )
+    db_session.commit()
+    assert evaluator.current_projection_week(db_session, SEASON) == 3
+
+
+# --- position filter -------------------------------------------------------
+
+
+def test_position_filter_expands_flex_and_folds_aliases():
+    assert evaluator.position_filter(None) is None
+    assert evaluator.position_filter("  ") is None
+    assert evaluator.position_filter("rb") == ["RB"]
+    assert evaluator.position_filter("FLEX") == ["RB", "WR", "TE"]
+    assert evaluator.position_filter("w/r/t") == ["RB", "WR", "TE"]
+    assert evaluator.position_filter("DST") == ["DEF"]
+
+
+def test_free_agents_flex_filter_includes_only_rb_wr_te(fa_league, db_session):
+    league, _ = fa_league
+    rows = evaluator.evaluate_free_agents(
+        db_session, league, position="FLEX", season=SEASON
+    )["rows"]
+    assert {row["full_name"] for row in rows} == {"Hot RB", "Steady WR"}
+    assert {row["position"] for row in rows} <= {"RB", "WR", "TE"}
+
+    # The Yahoo spelling of the same slot selects the same players.
+    alias = evaluator.evaluate_free_agents(
+        db_session, league, position="W/R/T", season=SEASON
+    )["rows"]
+    assert [row["full_name"] for row in alias] == [row["full_name"] for row in rows]
+
+
+# --- weekly points ---------------------------------------------------------
+
+
+@pytest.fixture()
+def week_league(db_session):
+    """fa_league's shape plus week-1 projections, so weekly maths is checkable.
+
+    My ROS-optimal starters are QB 300 / RB 150 / WR 120 / FLEX = the TE (60),
+    with the 50-point RB on the bench. Their week-1 points are 20/12/10/4.
+    """
+    league = make_league(db_session, roster_slots=SMALL_SLOTS, num_teams=2)
+    mine = make_team(db_session, league, "My Squad", is_my_team=True)
+
+    my_qb = make_player(db_session, "My QB", "QB", 300)
+    my_rb = make_player(db_session, "My RB", "RB", 150)
+    my_wr = make_player(db_session, "My WR", "WR", 120)
+    my_te = make_player(db_session, "My TE", "TE", 60)
+    my_bench = make_player(db_session, "My Bench RB", "RB", 50)
+    roster(db_session, league, mine, my_qb, my_rb, my_wr, my_te, my_bench)
+
+    for player, points in (
+        (my_qb, 20),
+        (my_rb, 12),
+        (my_wr, 10),
+        (my_te, 4),
+        (my_bench, 3),
+    ):
+        set_week_points(db_session, player, points)
+
+    fa_rb = make_player(db_session, "Hot RB", "RB", 100)
+    fa_wr = make_player(db_session, "Steady WR", "WR", 90)  # no weekly row
+    fa_qb = make_player(db_session, "Backup QB", "QB", 250)
+    set_week_points(db_session, fa_rb, 9)
+    set_week_points(db_session, fa_qb, 15)
+
+    db_session.commit()
+    return league, {"rb": fa_rb, "wr": fa_wr, "qb": fa_qb, "te": my_te}
+
+
+def _by_name(result: dict) -> dict:
+    return {row["full_name"]: row for row in result["rows"]}
+
+
+def test_free_agents_report_the_projection_week(week_league, db_session):
+    league, _ = week_league
+    result = evaluator.evaluate_free_agents(db_session, league, season=SEASON)
+    assert result["week"] == 1
+
+
+def test_week_points_come_from_the_current_weeks_projection(week_league, db_session):
+    league, _ = week_league
+    rows = _by_name(evaluator.evaluate_free_agents(db_session, league, season=SEASON))
+    assert rows["Hot RB"]["week_points"] == 9.0
+    assert rows["Backup QB"]["week_points"] == 15.0
+
+
+def test_week_points_are_null_without_a_weekly_projection(week_league, db_session):
+    league, _ = week_league
+    rows = _by_name(evaluator.evaluate_free_agents(db_session, league, season=SEASON))
+    assert rows["Steady WR"]["week_points"] is None
+    assert rows["Steady WR"]["week_delta"] is None
+    # ...but the season-long numbers are unaffected.
+    assert rows["Steady WR"]["ros_points"] == 90.0
+
+
+def test_week_points_prefer_fantasypros_over_espn(week_league, db_session):
+    league, f = week_league
+    set_week_points(db_session, f["rb"], 11, source="fantasypros")
+    db_session.commit()
+
+    rows = _by_name(evaluator.evaluate_free_agents(db_session, league, season=SEASON))
+    assert rows["Hot RB"]["week_points"] == 11.0
+
+
+def test_week_points_ignore_other_weeks(week_league, db_session):
+    league, f = week_league
+    # Week 1 is the latest week on file, so a stale week-0 row must not win.
+    set_week_points(db_session, f["rb"], 99, week=0)
+    db_session.commit()
+
+    rows = _by_name(evaluator.evaluate_free_agents(db_session, league, season=SEASON))
+    assert rows["Hot RB"]["week_points"] == 9.0
+
+
+def test_week_delta_uses_the_flex_aware_worst_starter(week_league, db_session):
+    league, _ = week_league
+    rows = _by_name(evaluator.evaluate_free_agents(db_session, league, season=SEASON))
+
+    # Worst FLEX-eligible starter this week is the TE's 4 points.
+    assert rows["Hot RB"]["week_delta"] == 5.0
+    # QB is not FLEX-eligible: compared with my QB starter's 20.
+    assert rows["Backup QB"]["week_delta"] == -5.0
+    # The bench RB (3 points) is not a starter and never sets the baseline.
+
+
+def test_week_delta_baseline_matches_the_ros_starter_set(week_league, db_session):
+    """The 3-point bench RB would be a cheaper baseline -- but it isn't a starter."""
+    league, _ = week_league
+    rows = _by_name(evaluator.evaluate_free_agents(db_session, league, season=SEASON))
+    assert rows["Hot RB"]["week_delta"] != 9.0 - 3.0
+
+
+def test_week_delta_is_null_when_the_baseline_starter_has_no_week_points(
+    week_league, db_session
+):
+    league, _f = week_league
+    # Drop every weekly projection from my own roster: no baseline is computable.
+    for name in ("My QB", "My RB", "My WR", "My TE", "My Bench RB"):
+        player = db_session.query(Player).filter(Player.full_name == name).one()
+        db_session.query(Projection).filter(
+            Projection.player_id == player.id, Projection.week.isnot(None)
+        ).delete()
+    db_session.commit()
+
+    rows = _by_name(evaluator.evaluate_free_agents(db_session, league, season=SEASON))
+    assert rows["Hot RB"]["week_points"] == 9.0
+    assert rows["Hot RB"]["week_delta"] is None
+    # The ROS comparison still works -- it never needed weekly numbers.
+    assert rows["Hot RB"]["my_worst_starter_delta"] == 40.0
+
+
+def test_week_columns_are_null_without_any_weekly_projections(fa_league, db_session):
+    league, _ = fa_league
+    result = evaluator.evaluate_free_agents(db_session, league, season=SEASON)
+    assert result["week"] is None
+    assert all(row["week_points"] is None for row in result["rows"])
+    assert all(row["week_delta"] is None for row in result["rows"])
+
+
+# --- my players ------------------------------------------------------------
+
+
+@pytest.fixture()
+def full_lineup_league(db_session):
+    """A full-slot league whose optimal lineup is deliberately not points-ordered."""
+    league = make_league(db_session, roster_slots=FULL_SLOTS, num_teams=2)
+    mine = make_team(db_session, league, "My Squad", is_my_team=True)
+    rival = make_team(db_session, league, "Rivals")
+
+    players = {
+        "QB1": make_player(db_session, "QB1", "QB", 300),
+        "RB1": make_player(db_session, "RB1", "RB", 200),
+        "RB2": make_player(db_session, "RB2", "RB", 180),
+        "RB3": make_player(db_session, "RB3", "RB", 90),
+        "WR1": make_player(db_session, "WR1", "WR", 170),
+        "WR2": make_player(db_session, "WR2", "WR", 160),
+        "WR3": make_player(db_session, "WR3", "WR", 100),
+        "TE1": make_player(db_session, "TE1", "TE", 80),
+        "K1": make_player(db_session, "K1", "K", 110),
+        "DEF1": make_player(db_session, "DEF1", "DEF", 120),
+    }
+    roster(db_session, league, mine, *players.values())
+    set_week_points(db_session, players["RB1"], 18)
+
+    rival_qb = make_player(db_session, "Rival QB", "QB", 280)
+    rival_rb = make_player(db_session, "Rival RB", "RB", 140)
+    roster(db_session, league, rival, rival_qb, rival_rb)
+
+    db_session.commit()
+    return league, mine, rival, players
+
+
+def test_my_players_are_starters_first_in_slot_order_then_bench(
+    full_lineup_league, db_session
+):
+    league, _mine, _rival, _players = full_lineup_league
+    mine = evaluator.evaluate_free_agents(db_session, league, season=SEASON)[
+        "my_players"
+    ]
+
+    assert [(row["starter_slot"], row["full_name"]) for row in mine] == [
+        ("QB", "QB1"),
+        ("RB", "RB1"),
+        ("RB", "RB2"),
+        ("WR", "WR1"),
+        ("WR", "WR2"),
+        ("TE", "TE1"),
+        ("FLEX", "WR3"),
+        ("K", "K1"),
+        ("DEF", "DEF1"),
+        (None, "RB3"),
+    ]
+    assert [row["is_starter"] for row in mine] == [True] * 9 + [False]
+
+
+def test_my_players_flex_occupant_matches_the_optimal_lineup(
+    full_lineup_league, db_session
+):
+    league, mine, _rival, _players = full_lineup_league
+    my_players = evaluator.evaluate_free_agents(db_session, league, season=SEASON)[
+        "my_players"
+    ]
+    lineup = evaluator.team_lineup(db_session, league, mine.id, season=SEASON)
+
+    flex = next(row for row in my_players if row["starter_slot"] == "FLEX")
+    # WR3 (100) beats RB3 (90) for the flex spot in both views.
+    assert flex["full_name"] == "WR3"
+    assert [(row["slot"], row["full_name"]) for row in lineup["starters"]] == [
+        (row["starter_slot"], row["full_name"]) for row in my_players if row["is_starter"]
+    ]
+
+
+def test_my_players_carry_points_and_week_points(full_lineup_league, db_session):
+    league, _mine, _rival, _players = full_lineup_league
+    mine = {
+        row["full_name"]: row
+        for row in evaluator.evaluate_free_agents(db_session, league, season=SEASON)[
+            "my_players"
+        ]
+    }
+    assert mine["RB1"]["ros_points"] == 200.0
+    assert mine["RB1"]["ppg"] == round(200 / 17, 1)
+    assert mine["RB1"]["week_points"] == 18.0
+    assert mine["RB2"]["week_points"] is None
+    assert mine["RB3"]["is_starter"] is False
+    assert mine["RB3"]["starter_slot"] is None
+
+
+def test_my_players_respect_the_position_filter(full_lineup_league, db_session):
+    league, _mine, _rival, _players = full_lineup_league
+    flex = evaluator.evaluate_free_agents(
+        db_session, league, position="FLEX", season=SEASON
+    )["my_players"]
+    assert {row["full_name"] for row in flex} == {
+        "RB1",
+        "RB2",
+        "RB3",
+        "WR1",
+        "WR2",
+        "WR3",
+        "TE1",
+    }
+    # Filtering the display never changes who is starting.
+    assert next(row for row in flex if row["full_name"] == "WR3")["starter_slot"] == "FLEX"
+
+    qbs = evaluator.evaluate_free_agents(
+        db_session, league, position="QB", season=SEASON
+    )["my_players"]
+    assert [row["full_name"] for row in qbs] == ["QB1"]
+
+
+def test_my_players_is_empty_without_a_my_team(db_session):
+    league = make_league(db_session, roster_slots=SMALL_SLOTS, num_teams=2)
+    other = make_team(db_session, league, "Someone Else")
+    roster(db_session, league, other, make_player(db_session, "Their RB", "RB", 150))
+    make_player(db_session, "Free RB", "RB", 100)
+    db_session.commit()
+
+    assert evaluator.evaluate_free_agents(db_session, league, season=SEASON)[
+        "my_players"
+    ] == []
+
+
+# --- team_lineup -----------------------------------------------------------
+
+
+def test_team_lineup_splits_starters_and_bench(full_lineup_league, db_session):
+    league, mine, _rival, _players = full_lineup_league
+    lineup = evaluator.team_lineup(db_session, league, mine.id, season=SEASON)
+
+    assert lineup["week"] == 1
+    assert [(row["slot"], row["full_name"]) for row in lineup["starters"]] == [
+        ("QB", "QB1"),
+        ("RB", "RB1"),
+        ("RB", "RB2"),
+        ("WR", "WR1"),
+        ("WR", "WR2"),
+        ("TE", "TE1"),
+        ("FLEX", "WR3"),
+        ("K", "K1"),
+        ("DEF", "DEF1"),
+    ]
+    assert [row["full_name"] for row in lineup["bench"]] == ["RB3"]
+
+    starter = lineup["starters"][1]
+    assert starter == {
+        "slot": "RB",
+        "player_id": _players["RB1"].id,
+        "full_name": "RB1",
+        "position": "RB",
+        "nfl_team": "SF",
+        "week_points": 18.0,
+        "ros_points": 200.0,
+    }
+    assert "slot" not in lineup["bench"][0]
+    assert lineup["bench"][0]["ros_points"] == 90.0
+    assert lineup["bench"][0]["week_points"] is None
+
+
+def test_team_lineup_works_for_any_team(full_lineup_league, db_session):
+    league, _mine, rival, _players = full_lineup_league
+    lineup = evaluator.team_lineup(db_session, league, rival.id, season=SEASON)
+
+    # A two-player roster fills only the slots it can.
+    assert [(row["slot"], row["full_name"]) for row in lineup["starters"]] == [
+        ("QB", "Rival QB"),
+        ("RB", "Rival RB"),
+    ]
+    assert lineup["bench"] == []
+
+
+def test_team_lineup_of_an_empty_roster_is_empty(full_lineup_league, db_session):
+    league, _mine, _rival, _players = full_lineup_league
+    empty = make_team(db_session, league, "Nobody")
+    db_session.commit()
+
+    lineup = evaluator.team_lineup(db_session, league, empty.id, season=SEASON)
+    assert lineup["starters"] == []
+    assert lineup["bench"] == []
 
 
 # --- trades ----------------------------------------------------------------

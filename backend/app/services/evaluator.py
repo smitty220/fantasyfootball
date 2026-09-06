@@ -1,9 +1,10 @@
 """Evaluation engine: free-agent evaluator + trade evaluator.
 
 Everything here reads only from SQLite (see design.md: evaluators never call
-external APIs). The two entry points are :func:`evaluate_free_agents` and
-:func:`evaluate_trade`; the helpers above them are deliberately small and
-mostly pure so the maths can be unit-tested without a database.
+external APIs). The entry points are :func:`evaluate_free_agents`,
+:func:`evaluate_trade` and :func:`team_lineup`; the helpers above them are
+deliberately small and mostly pure so the maths can be unit-tested without a
+database.
 
 Core ideas
 ----------
@@ -14,13 +15,22 @@ worth different amounts in the keeper league vs the redraft league.
 *VOR* (value over replacement) subtracts a positional replacement level, which
 is derived from how many starters the whole league needs at that position:
 direct roster slots plus a share of each FLEX slot.
+
+*Week points* come from the single-week projection rows (``week = N``) for
+whatever week the ingestion last stored -- see :func:`current_projection_week`.
+
+*Starters* are always the ROS-optimal lineup (:func:`_fill_lineup` on ROS
+points). One starter set is used for every comparison, weekly and ROS alike,
+so the "who would this pickup replace?" answer never depends on which column
+you are looking at.
 """
 
 from __future__ import annotations
 
 import math
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Iterable, Mapping, NamedTuple, Sequence
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -117,13 +127,39 @@ def league_points(
     return scoring.score_stat_line(projection.stat_json, rules)
 
 
+def current_projection_week(db: Session, season: int) -> int | None:
+    """The week our weekly projections currently describe, if any.
+
+    Weekly ingestion only ever stores the *current* week (see
+    ``espn.refresh_week_projections``), so the highest ``week`` on file is the
+    latest one. ``None`` when the season has no weekly rows at all.
+    """
+    week = (
+        db.query(func.max(Projection.week))
+        .filter(
+            Projection.season == season,
+            Projection.week.isnot(None),
+            Projection.source.in_(SOURCE_PRIORITY),
+        )
+        .scalar()
+    )
+    return int(week) if week is not None else None
+
+
 def _projections_for(
-    db: Session, season: int, player_ids: Sequence[int] | None = None
+    db: Session,
+    season: int,
+    player_ids: Sequence[int] | None = None,
+    week: int | None = None,
 ) -> dict[int, Projection]:
-    """Best season-long projection per player, in one query."""
+    """Best projection per player, in one query.
+
+    ``week=None`` means the season-long (``Projection.week IS NULL``) rows;
+    ``week=N`` means that single week's rows.
+    """
     query = db.query(Projection).filter(
         Projection.season == season,
-        Projection.week.is_(None),
+        Projection.week.is_(None) if week is None else Projection.week == week,
         Projection.source.in_(SOURCE_PRIORITY),
     )
     if player_ids is not None:
@@ -149,6 +185,20 @@ def _projections_for(
 def _normalize_slot(slot: str) -> str:
     label = (slot or "").strip().upper()
     return _SLOT_ALIASES.get(label, label)
+
+
+def position_filter(position: str | None) -> list[str] | None:
+    """Positions a ``position=`` query argument selects, or ``None`` for all.
+
+    Understands slot labels as well as bare positions, so ``FLEX`` (and its
+    ``W/R/T`` spellings) expands to RB/WR/TE and ``DST`` folds into ``DEF``.
+    """
+    if not position or not position.strip():
+        return None
+    label = _normalize_slot(position)
+    if label == "FLEX":
+        return list(FLEX_POSITIONS)
+    return [label]
 
 
 def league_roster_slots(league: League) -> dict[str, int]:
@@ -330,6 +380,30 @@ def _points_and_positions(
     return points, positions
 
 
+def _week_points(
+    db: Session,
+    league: League,
+    player_ids: Sequence[int],
+    season: int,
+    week: int | None,
+) -> dict[int, float]:
+    """League-scored points from the ``week`` projection, per player.
+
+    Unlike ROS points, players with no weekly projection are simply *absent*
+    from the mapping rather than scoring 0 -- callers surface that as a null,
+    since "we have no forecast" and "we forecast nothing" are different
+    claims for a single game.
+    """
+    ids = list({int(pid) for pid in player_ids})
+    if not ids or week is None:
+        return {}
+    rules = scoring.league_rules(league.settings_json)
+    return {
+        pid: round(league_points(projection, rules), 2)
+        for pid, projection in _projections_for(db, season, ids, week=week).items()
+    }
+
+
 # --- free agents -----------------------------------------------------------
 
 
@@ -353,31 +427,58 @@ def _team_player_ids(db: Session, league: League, team_id: int) -> list[int]:
     ]
 
 
-def _worst_starter_points(
-    db: Session, league: League, team: Team, season: int
+class TeamRoster(NamedTuple):
+    """One team's players, its optimal lineup, and both points views.
+
+    The lineup is always the *ROS-optimal* one: a single starter set drives
+    both the ROS and the weekly comparisons, so the two never disagree about
+    who is starting.
+    """
+
+    player_ids: list[int]
+    lineup: list[tuple[str, int]]
+    ros_points: dict[int, float]
+    week_points: dict[int, float]
+    positions: dict[int, str | None]
+
+    @property
+    def starter_slots(self) -> dict[int, str]:
+        """player_id -> the slot they start in."""
+        return {pid: slot for slot, pid in self.lineup}
+
+
+def _team_roster(
+    db: Session, league: League, team_id: int, season: int, week: int | None
+) -> TeamRoster:
+    ids = _team_player_ids(db, league, team_id)
+    ros_points, positions = _points_and_positions(db, league, ids, season)
+    week_points = _week_points(db, league, ids, season, week)
+    lineup = _fill_lineup(league_roster_slots(league), ros_points, positions, ids)
+    return TeamRoster(ids, lineup, ros_points, week_points, positions)
+
+
+def _worst_starters(
+    roster: TeamRoster, points: Mapping[int, float]
 ) -> dict[str, float]:
-    """Worst projected starter points per position for one team.
+    """Worst starter points per position, under one points view.
 
     FLEX-eligible positions (RB/WR/TE) all map to the same figure: the worst
     starter among the team's RB/WR/TE starters, because any of them could be
     the one a new FLEX-eligible player displaces.
+
+    Starters missing from ``points`` (no weekly projection, say) are left out
+    of the comparison entirely rather than counted as 0.
     """
-    roster = _team_player_ids(db, league, team.id)
-    if not roster:
-        return {}
-
-    points, positions = _points_and_positions(db, league, roster, season)
-    lineup = _fill_lineup(league_roster_slots(league), points, positions, roster)
-
     by_position: dict[str, list[float]] = {}
     flex_pool: list[float] = []
-    for _slot, pid in lineup:
-        position = positions.get(pid)
-        if position is None:
+    for _slot, pid in roster.lineup:
+        position = roster.positions.get(pid)
+        value = points.get(pid)
+        if position is None or value is None:
             continue
-        by_position.setdefault(position, []).append(points.get(pid, 0.0))
+        by_position.setdefault(position, []).append(value)
         if position in FLEX_POSITIONS:
-            flex_pool.append(points.get(pid, 0.0))
+            flex_pool.append(value)
 
     worst = {
         position: min(values) for position, values in by_position.items() if values
@@ -390,7 +491,7 @@ def _worst_starter_points(
 
 
 def _free_agent_players(
-    db: Session, league: League, position: str | None
+    db: Session, league: League, positions: Sequence[str] | None
 ) -> list[Player]:
     if league.source == "manual":
         # Manual leagues have no FA rows: anything with no LeaguePlayer row in
@@ -412,8 +513,8 @@ def _free_agent_players(
             )
         )
 
-    if position:
-        query = query.filter(Player.position == position.upper())
+    if positions:
+        query = query.filter(Player.position.in_(list(positions)))
     return query.all()
 
 
@@ -423,17 +524,43 @@ def evaluate_free_agents(
     position: str | None = None,
     limit: int = 50,
     season: int | None = None,
-) -> list[dict]:
-    """Rank a league's available players by value over replacement."""
+) -> dict:
+    """Rank a league's available players by value over replacement.
+
+    Returns ``{"week", "rows", "my_players"}``: the week the weekly numbers
+    describe (``None`` when no weekly projections are on file), the ranked
+    free agents, and my own roster with its starters flagged so a pickup can
+    be judged against the player it would actually replace.
+    """
     season = season if season is not None else current_nfl_season()
     rules = scoring.league_rules(league.settings_json)
+    week = current_projection_week(db, season)
+    positions = position_filter(position)
 
-    players = _free_agent_players(db, league, position)
+    team = _my_team(db, league)
+    my_roster = (
+        _team_roster(db, league, team.id, season, week) if team is not None else None
+    )
+    worst_ros = (
+        _worst_starters(my_roster, my_roster.ros_points) if my_roster is not None else {}
+    )
+    worst_week = (
+        _worst_starters(my_roster, my_roster.week_points) if my_roster is not None else {}
+    )
+
+    payload = {
+        "week": week,
+        "rows": [],
+        "my_players": _my_player_rows(db, my_roster, positions),
+    }
+
+    players = _free_agent_players(db, league, positions)
     if not players:
-        return []
+        return payload
 
     player_ids = [player.id for player in players]
     projections = _projections_for(db, season, player_ids)
+    week_points = _week_points(db, league, player_ids, season, week)
     levels = replacement_levels(db, league, season)
 
     values = {
@@ -457,20 +584,20 @@ def evaluate_free_agents(
         .all()
     }
 
-    team = _my_team(db, league)
-    worst_starters = (
-        _worst_starter_points(db, league, team, season) if team is not None else {}
-    )
-
     rows: list[dict] = []
     for player in players:
         projection = projections.get(player.id)
         ros_points = league_points(projection, rules)
         replacement = levels.get(player.position or "", 0.0)
+        player_week_points = week_points.get(player.id)
 
         delta = None
-        if team is not None and player.position in worst_starters:
-            delta = round(ros_points - worst_starters[player.position], 1)
+        if player.position in worst_ros:
+            delta = round(ros_points - worst_ros[player.position], 1)
+
+        week_delta = None
+        if player_week_points is not None and player.position in worst_week:
+            week_delta = round(player_week_points - worst_week[player.position], 1)
 
         rows.append(
             {
@@ -482,6 +609,8 @@ def evaluate_free_agents(
                 "has_projection": projection is not None,
                 "ros_points": round(ros_points, 2),
                 "ppg": round(ros_points / GAMES_PER_SEASON, 1),
+                "week_points": player_week_points,
+                "week_delta": week_delta,
                 "vor": round(ros_points - replacement, 1),
                 "trade_value": values.get(player.id),
                 "trending_add": trending.get(player.id),
@@ -490,7 +619,103 @@ def evaluate_free_agents(
         )
 
     rows.sort(key=lambda row: (not row["has_projection"], -row["vor"], row["full_name"]))
-    return rows[:limit]
+    payload["rows"] = rows[:limit]
+    return payload
+
+
+# --- my roster / lineups ---------------------------------------------------
+
+
+#: Order starters are displayed in.
+STARTER_SLOT_ORDER: tuple[str, ...] = ("QB", "RB", "WR", "TE", "FLEX", "K", "DEF")
+
+
+def _slot_rank(slot: str) -> int:
+    try:
+        return STARTER_SLOT_ORDER.index(slot)
+    except ValueError:  # pragma: no cover - defensive; slots come from _fill_lineup
+        return len(STARTER_SLOT_ORDER)
+
+
+def _my_player_rows(
+    db: Session, roster: TeamRoster | None, positions: Sequence[str] | None
+) -> list[dict]:
+    """My team's players, starters first (in slot order), then bench by ROS."""
+    if roster is None or not roster.player_ids:
+        return []
+
+    query = db.query(Player).filter(Player.id.in_(roster.player_ids))
+    if positions:
+        query = query.filter(Player.position.in_(list(positions)))
+
+    slots = roster.starter_slots
+    rows = []
+    for player in query.all():
+        ros_points = roster.ros_points.get(player.id, 0.0)
+        slot = slots.get(player.id)
+        rows.append(
+            {
+                "player_id": player.id,
+                "full_name": player.full_name,
+                "position": player.position,
+                "nfl_team": player.nfl_team,
+                "injury_status": player.injury_status,
+                "ros_points": round(ros_points, 2),
+                "ppg": round(ros_points / GAMES_PER_SEASON, 1),
+                "week_points": roster.week_points.get(player.id),
+                "is_starter": slot is not None,
+                "starter_slot": slot,
+            }
+        )
+
+    rows.sort(
+        key=lambda row: (
+            not row["is_starter"],
+            _slot_rank(row["starter_slot"]) if row["is_starter"] else 0,
+            -row["ros_points"],
+            row["full_name"],
+        )
+    )
+    return rows
+
+
+def team_lineup(
+    db: Session, league: League, team_id: int, season: int | None = None
+) -> dict:
+    """One team's ROS-optimal lineup, split into starters and bench.
+
+    Works for any team in the league, not just mine.
+    """
+    season = season if season is not None else current_nfl_season()
+    week = current_projection_week(db, season)
+    roster = _team_roster(db, league, team_id, season, week)
+
+    players = {
+        player.id: player
+        for player in db.query(Player).filter(Player.id.in_(roster.player_ids)).all()
+    }
+
+    def row(pid: int) -> dict:
+        player = players.get(pid)
+        return {
+            "player_id": pid,
+            "full_name": player.full_name if player else f"player {pid}",
+            "position": player.position if player else None,
+            "nfl_team": player.nfl_team if player else None,
+            "week_points": roster.week_points.get(pid),
+            "ros_points": round(roster.ros_points.get(pid, 0.0), 2),
+        }
+
+    starters = [
+        {"slot": slot, **row(pid)}
+        for slot, pid in sorted(roster.lineup, key=lambda pair: _slot_rank(pair[0]))
+    ]
+    started = {pid for _slot, pid in roster.lineup}
+    bench = sorted(
+        (row(pid) for pid in roster.player_ids if pid not in started),
+        key=lambda entry: (-entry["ros_points"], entry["full_name"]),
+    )
+    return {"week": week, "starters": starters, "bench": bench}
 
 
 # --- trades ----------------------------------------------------------------

@@ -41,6 +41,15 @@ players/values checked in each note:
   endpoint with any ``?scoringPeriodId=N`` query param returns *every*
   week's stats (not just week N) alongside the season rows, so one page
   fetch covers a whole season's worth of weekly + rest-of-season data.
+* Current week: the *bare* endpoint (no ``view`` param) returns a top-level
+  ``scoringPeriodId`` -- 1 for season 2026 when checked on 2026-09-06, in a
+  document whose keys were ``gameId, id, scoringPeriodId, seasonId,
+  segmentId, settings, status``. The ``kona_player_info`` response does NOT
+  carry it (that payload has only a ``players`` key), so
+  :func:`_fetch_current_week` deliberately asks for the bare document.
+  ``status.latestScoringPeriod`` was 0 at the same moment (no games played
+  yet) and ``status.currentMatchupPeriod`` was 1, confirming
+  ``scoringPeriodId`` is the field naming the *upcoming* week.
 * Stat-ID -> canonical mapping was cross-checked two ways: (a) against the
   long-standing, community-maintained ``PLAYER_STATS_MAP`` in the
   ``espn-api`` PyPI package's ``constant.py`` (not installed here -- no new
@@ -264,6 +273,34 @@ def _select_stat_line(
     return None
 
 
+def _fetch_current_week(client: httpx.Client, season: int) -> int | None:
+    """The week ESPN itself considers current, or ``None`` if it says nothing.
+
+    The bare ``leaguedefaults`` document (no ``view``) carries a top-level
+    ``scoringPeriodId``; the ``kona_player_info`` view does **not** -- that
+    response is just ``{"players": [...]}``. Verified live on 2026-09-06:
+    the bare endpoint for season 2026 returned
+    ``{"gameId", "id", "scoringPeriodId": 1, "seasonId": 2026, "segmentId",
+    "settings", "status"}`` while the kona_player_info response had only the
+    ``players`` key. ``status.latestScoringPeriod`` was 0 at the time (no
+    games played yet), so ``scoringPeriodId`` -- not that -- is the field
+    that names the *upcoming* week we want projections for.
+    """
+    response = client.get(BASE_URL.format(season=season))
+    response.raise_for_status()
+    try:
+        week = int(response.json().get("scoringPeriodId"))
+    except (AttributeError, TypeError, ValueError):
+        return None
+    return week if week >= 1 else None
+
+
+def current_week(season: int) -> int | None:
+    """Current NFL week for ``season`` per ESPN (see :func:`_fetch_current_week`)."""
+    with httpx.Client(timeout=15.0) as client:
+        return _fetch_current_week(client, season)
+
+
 def _fetch_page(
     client: httpx.Client, season: int, offset: int, limit: int
 ) -> list[dict]:
@@ -337,7 +374,13 @@ def _upsert_projection(
     db.flush()
 
 
-def refresh_projections(db: Session, season: int, week: int | None = None) -> dict:
+def refresh_projections(
+    db: Session,
+    season: int,
+    week: int | None = None,
+    *,
+    resource: str = "espn_projections",
+) -> dict:
     """Pull ESPN projections for ``season``.
 
     ``week=None`` stores the full-season/rest-of-season row
@@ -345,8 +388,10 @@ def refresh_projections(db: Session, season: int, week: int | None = None) -> di
     Players are matched by ``espn_id`` first, falling back to normalized
     name+position; unresolved players are counted and skipped rather than
     creating new ``Player`` rows.
+
+    ``resource`` names the SyncLog row so season and weekly pulls have
+    separate histories.
     """
-    resource = "espn_projections"
     with _sync_log(db, resource) as log:
         fetched_at = _utcnow()
         matched_by_id = 0
@@ -424,8 +469,42 @@ def refresh_projections(db: Session, season: int, week: int | None = None) -> di
         }
 
 
+WEEK_RESOURCE = "espn_week_projections"
+
+
 def refresh_season_projections(db: Session) -> dict:
     """Registry-friendly wrapper: full-season projections for the current season."""
     from app.services.yahoo.sync import current_nfl_season
 
     return refresh_projections(db, current_nfl_season(), week=None)
+
+
+def refresh_week_projections(db: Session) -> dict:
+    """Registry-friendly wrapper: *this* week's projections.
+
+    The week is whatever ESPN says is current (its own ``scoringPeriodId``),
+    so nothing here has to know the NFL calendar. If ESPN gives no usable
+    week, a SyncLog row is still written and nothing is ingested.
+    """
+    from app.services.yahoo.sync import current_nfl_season
+
+    season = current_nfl_season()
+    week = current_week(season)
+    if week is None:
+        with _sync_log(db, WEEK_RESOURCE) as log:
+            log.message = (
+                f"season {season}: ESPN reported no current scoring period; "
+                "no weekly projections ingested"
+            )
+        return {
+            "season": season,
+            "week": None,
+            "pages": 0,
+            "saved": 0,
+            "matched_by_id": 0,
+            "matched_by_name": 0,
+            "unmatched": 0,
+            "no_projection": 0,
+        }
+
+    return refresh_projections(db, season, week=week, resource=WEEK_RESOURCE)

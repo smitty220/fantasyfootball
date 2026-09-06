@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import League
+from app.models import League, Team
 from app.services import evaluator
 from app.services.yahoo.sync import current_nfl_season
 
@@ -26,16 +26,54 @@ class FreeAgentRow(BaseModel):
     has_projection: bool
     ros_points: float
     ppg: float
+    week_points: float | None = None
+    week_delta: float | None = None
     vor: float
     trade_value: float | None = None
     trending_add: int | None = None
     my_worst_starter_delta: float | None = None
 
 
+class MyPlayerRow(BaseModel):
+    player_id: int
+    full_name: str
+    position: str | None = None
+    nfl_team: str | None = None
+    injury_status: str | None = None
+    ros_points: float
+    ppg: float
+    week_points: float | None = None
+    is_starter: bool
+    starter_slot: str | None = None
+
+
 class FreeAgentsResponse(BaseModel):
     league_key: str
     season: int
+    week: int | None = None
     rows: list[FreeAgentRow]
+    my_players: list[MyPlayerRow] = Field(default_factory=list)
+
+
+class LineupPlayer(BaseModel):
+    player_id: int
+    full_name: str
+    position: str | None = None
+    nfl_team: str | None = None
+    week_points: float | None = None
+    ros_points: float
+
+
+class LineupStarter(LineupPlayer):
+    slot: str
+
+
+class TeamLineupResponse(BaseModel):
+    league_key: str
+    team_id: int
+    week: int | None = None
+    starters: list[LineupStarter]
+    bench: list[LineupPlayer]
 
 
 class TradeSideIn(BaseModel):
@@ -91,26 +129,64 @@ def _get_league(db: Session, league_key: str) -> League:
     return league
 
 
+def _get_team(db: Session, league: League, team_id: int) -> Team:
+    team = db.query(Team).filter(Team.id == team_id).one_or_none()
+    if team is None or team.league_id != league.id:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown team {team_id} in league {league.league_key}",
+        )
+    return team
+
+
 # --- endpoints -------------------------------------------------------------
 
 
 @router.get("/{league_key}/evaluate/free-agents", response_model=FreeAgentsResponse)
 def free_agent_rankings(
     league_key: str,
-    position: str | None = Query(default=None),
+    position: str | None = Query(
+        default=None,
+        description='Position to filter by; "FLEX" (or "W/R/T") means RB/WR/TE.',
+    ),
     limit: int = Query(default=50, ge=1, le=500),
     db: Session = Depends(get_db),
 ) -> FreeAgentsResponse:
     league = _get_league(db, league_key)
     season = current_nfl_season()
 
-    rows = evaluator.evaluate_free_agents(
+    result = evaluator.evaluate_free_agents(
         db, league, position=position, limit=limit, season=season
     )
     return FreeAgentsResponse(
         league_key=league.league_key,
         season=season,
-        rows=[FreeAgentRow(**row) for row in rows],
+        week=result["week"],
+        rows=[FreeAgentRow(**row) for row in result["rows"]],
+        my_players=[MyPlayerRow(**row) for row in result["my_players"]],
+    )
+
+
+@router.get(
+    "/{league_key}/evaluate/teams/{team_id}/lineup",
+    response_model=TeamLineupResponse,
+)
+def team_lineup(
+    league_key: str,
+    team_id: int,
+    db: Session = Depends(get_db),
+) -> TeamLineupResponse:
+    """The ROS-optimal starting lineup for any team in the league."""
+    league = _get_league(db, league_key)
+    team = _get_team(db, league, team_id)
+
+    result = evaluator.team_lineup(db, league, team.id, season=current_nfl_season())
+    return TeamLineupResponse(
+        league_key=league.league_key,
+        team_id=team.id,
+        week=result["week"],
+        starters=[LineupStarter(**row) for row in result["starters"]],
+        bench=[LineupPlayer(**row) for row in result["bench"]],
     )
 
 

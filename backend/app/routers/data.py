@@ -30,6 +30,7 @@ REFRESH_REGISTRY: dict[str, tuple[str, str]] = {
     "sleeper_trending": ("app.services.sleeper", "refresh_trending"),
     "fantasycalc": ("app.services.fantasycalc", "refresh_trade_values"),
     "espn_projections": ("app.services.espn", "refresh_season_projections"),
+    "espn_week_projections": ("app.services.espn", "refresh_week_projections"),
 }
 
 

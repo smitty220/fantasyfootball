@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import importlib
+
 from app.models import SyncLog
+from app.routers.data import REFRESH_REGISTRY
 from app.services import sleeper
 
 
@@ -14,6 +17,13 @@ def _utcnow():
 
 def test_refresh_unknown_source_404(client):
     assert client.post("/api/data/refresh/nonsense").status_code == 404
+
+
+def test_refresh_registry_entries_resolve_to_callables():
+    assert "espn_week_projections" in REFRESH_REGISTRY
+    for source, (module_name, func_name) in REFRESH_REGISTRY.items():
+        module = importlib.import_module(module_name)
+        assert callable(getattr(module, func_name)), source
 
 
 def test_refresh_known_source_runs_and_returns_sync_log(client, db_session, monkeypatch):

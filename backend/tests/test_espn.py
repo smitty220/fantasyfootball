@@ -376,6 +376,158 @@ def test_refresh_projections_upsert_idempotent(db_session):
     assert all(entry.status == "success" for entry in log)
 
 
+# --------------------------------------------------------------------------- #
+# current week + weekly refresh
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture()
+def season_2026(monkeypatch):
+    """Pin the "current" season so weekly tests don't drift with the calendar."""
+    monkeypatch.setattr(
+        "app.services.yahoo.sync.current_nfl_season", lambda *a, **k: SEASON
+    )
+
+
+def _league_document(scoring_period_id) -> dict:
+    """The bare leaguedefaults document, shaped like the live one."""
+    return {
+        "gameId": 1,
+        "id": 3,
+        "scoringPeriodId": scoring_period_id,
+        "seasonId": SEASON,
+        "segmentId": 0,
+        "status": {"currentMatchupPeriod": 1, "latestScoringPeriod": 0},
+    }
+
+
+@respx.mock
+def test_current_week_reads_scoring_period_id(db_session):
+    respx.get(_espn_url()).mock(
+        return_value=httpx.Response(200, json=_league_document(4))
+    )
+    assert espn.current_week(SEASON) == 4
+
+
+@respx.mock
+@pytest.mark.parametrize("value", [None, 0, "nope"])
+def test_current_week_is_none_when_espn_gives_no_usable_week(value):
+    respx.get(_espn_url()).mock(
+        return_value=httpx.Response(200, json=_league_document(value))
+    )
+    assert espn.current_week(SEASON) is None
+
+
+@respx.mock
+def test_refresh_week_projections_ingests_espns_current_week(db_session, season_2026):
+    player = Player(full_name="Josh Allen", position="QB", espn_id="3918298")
+    db_session.add(player)
+    db_session.commit()
+
+    payload = {
+        "players": [
+            _player_entry(
+                3918298,
+                "Josh Allen",
+                1,
+                [
+                    _season_stat_entry({"3": 4000.0}),
+                    _week_stat_entry(1, {"3": 250.0, "4": 2.0}),
+                    _week_stat_entry(2, {"3": 999.0}),
+                ],
+            )
+        ]
+    }
+    respx.get(_espn_url()).mock(
+        side_effect=[
+            httpx.Response(200, json=_league_document(1)),
+            httpx.Response(200, json=payload),
+            httpx.Response(200, json={"players": []}),
+        ]
+    )
+
+    result = espn.refresh_week_projections(db_session)
+    assert result == {
+        "season": SEASON,
+        "week": 1,
+        "pages": 1,
+        "saved": 1,
+        "matched_by_id": 1,
+        "matched_by_name": 0,
+        "unmatched": 0,
+        "no_projection": 0,
+    }
+
+    # Only the current week is stored -- week 2's line is on the wire but ignored.
+    row = db_session.query(Projection).filter(Projection.source == "espn").one()
+    assert row.week == 1
+    assert row.season == SEASON
+    assert row.stat_json == {"pass_yds": 250.0, "pass_td": 2.0}
+
+    log = db_session.query(SyncLog).one()
+    assert log.resource == "espn_week_projections"
+    assert log.status == "success"
+    assert "week 1" in log.message
+
+
+@respx.mock
+def test_refresh_week_projections_without_a_current_week_logs_and_skips(
+    db_session, season_2026
+):
+    respx.get(_espn_url()).mock(
+        return_value=httpx.Response(200, json=_league_document(None))
+    )
+
+    result = espn.refresh_week_projections(db_session)
+    assert result["week"] is None
+    assert result["saved"] == 0
+    assert db_session.query(Projection).count() == 0
+
+    log = db_session.query(SyncLog).one()
+    assert log.resource == "espn_week_projections"
+    assert log.status == "success"
+    assert "no current scoring period" in log.message
+
+
+@respx.mock
+def test_refresh_week_projections_logs_separately_from_the_season_pull(
+    db_session, season_2026
+):
+    player = Player(full_name="Josh Allen", position="QB", espn_id="3918298")
+    db_session.add(player)
+    db_session.commit()
+
+    payload = {
+        "players": [
+            _player_entry(
+                3918298,
+                "Josh Allen",
+                1,
+                [_season_stat_entry({"3": 4000.0}), _week_stat_entry(1, {"3": 250.0})],
+            )
+        ]
+    }
+    # A one-player page is shorter than PAGE_SIZE, so each refresh stops after
+    # a single page: season page, then the week refresh's league document + page.
+    respx.get(_espn_url()).mock(
+        side_effect=[
+            httpx.Response(200, json=payload),
+            httpx.Response(200, json=_league_document(1)),
+            httpx.Response(200, json=payload),
+        ]
+    )
+
+    espn.refresh_season_projections(db_session)
+    espn.refresh_week_projections(db_session)
+
+    assert {log.resource for log in db_session.query(SyncLog).all()} == {
+        "espn_projections",
+        "espn_week_projections",
+    }
+    weeks = {row.week for row in db_session.query(Projection).all()}
+    assert weeks == {None, 1}
+
+
 @respx.mock
 def test_refresh_projections_pages_through_multiple_pages(db_session, monkeypatch):
     monkeypatch.setattr(espn, "PAGE_SIZE", 1)
