@@ -157,6 +157,9 @@ export function LeagueDetailPage() {
         >
           Free agents
         </button>
+        <Link to={`/leagues/${encodeURIComponent(leagueKey)}/trade`} className="tab">
+          Trade analyzer
+        </Link>
       </div>
 
       {tab === 'teams' && (

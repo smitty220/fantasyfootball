@@ -5,6 +5,7 @@ import { getHealth } from './api/endpoints'
 import { LeaguesPage } from './pages/LeaguesPage'
 import { NewLeagueWizard } from './pages/NewLeagueWizard'
 import { LeagueDetailPage } from './pages/LeagueDetailPage'
+import { TradeAnalyzerPage } from './pages/TradeAnalyzerPage'
 import { DataPage } from './pages/DataPage'
 
 type HealthState = 'checking' | 'ok' | 'error'
@@ -39,6 +40,7 @@ function App() {
           <Route path="/" element={<LeaguesPage />} />
           <Route path="/leagues/new" element={<NewLeagueWizard />} />
           <Route path="/leagues/:leagueKey" element={<LeagueDetailPage />} />
+          <Route path="/leagues/:leagueKey/trade" element={<TradeAnalyzerPage />} />
           <Route path="/data" element={<DataPage />} />
         </Routes>
       </main>

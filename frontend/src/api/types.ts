@@ -95,6 +95,70 @@ export interface FreeAgent {
   [key: string]: unknown
 }
 
+export interface FreeAgentEvalRow {
+  player_id: string
+  full_name: string
+  position: string
+  nfl_team: string | null
+  injury_status: InjuryStatus
+  has_projection: boolean
+  ros_points: number
+  ppg: number
+  vor: number
+  trade_value: number | null
+  trending_add: number | null
+  my_worst_starter_delta: number | null
+}
+
+export interface FreeAgentsEvalResponse {
+  league_key: string
+  season: number
+  rows: FreeAgentEvalRow[]
+}
+
+export interface TradeSidePayload {
+  team_id: number
+  player_ids: number[]
+}
+
+export interface TradeEvaluatePayload {
+  side_a: TradeSidePayload
+  side_b: TradeSidePayload
+}
+
+export interface TradePlayerResult {
+  player_id: number
+  full_name: string
+  position: string
+  ros_points: number
+  ppg: number
+  value: number
+  dynasty_value: number
+}
+
+export interface TradeSideResult {
+  team_id: number
+  team_name: string
+  total_ros_points: number
+  total_value: number
+  lineup_points_before: number
+  lineup_points_after: number
+  lineup_delta: number
+  players: TradePlayerResult[]
+}
+
+export type TradeVerdict = 'fair' | 'favors_a' | 'favors_b'
+
+export interface TradeEvaluateResponse {
+  verdict: TradeVerdict
+  margin_pct: number
+  sides: {
+    a: TradeSideResult
+    b: TradeSideResult
+  }
+  notes: string[]
+}
+
 export type DataSourceId =
   | 'crosswalk'
   | 'sleeper_players'

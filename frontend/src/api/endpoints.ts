@@ -6,12 +6,15 @@ import type {
   DataSourceId,
   DataStatusRow,
   FreeAgent,
+  FreeAgentsEvalResponse,
   HealthResponse,
   League,
   LeagueDetail,
   PlayerSearchResult,
   RosterPlayer,
   Team,
+  TradeEvaluatePayload,
+  TradeEvaluateResponse,
   UpdateManualLeaguePayload,
   UpdateTeamPayload,
   YahooStatus,
@@ -75,6 +78,20 @@ export function searchPlayers(q: string, position?: string, limit = 20): Promise
 
 export function getFreeAgents(leagueKey: string, position?: string, limit = 50): Promise<FreeAgent[]> {
   return apiGet(`/api/leagues/${encodeURIComponent(leagueKey)}/free-agents${buildQuery({ position, limit })}`)
+}
+
+export function getFreeAgentsEval(
+  leagueKey: string,
+  position?: string,
+  limit = 50,
+): Promise<FreeAgentsEvalResponse> {
+  return apiGet(
+    `/api/leagues/${encodeURIComponent(leagueKey)}/evaluate/free-agents${buildQuery({ position, limit })}`,
+  )
+}
+
+export function evaluateTrade(leagueKey: string, payload: TradeEvaluatePayload): Promise<TradeEvaluateResponse> {
+  return apiPost(`/api/leagues/${encodeURIComponent(leagueKey)}/evaluate/trade`, payload)
 }
 
 export function refreshDataSource(source: DataSourceId): Promise<DataRefreshResult> {
