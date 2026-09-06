@@ -1,30 +1,43 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getFreeAgentsEval } from '../api/endpoints'
-import type { FreeAgentEvalRow } from '../api/types'
+import type { FreeAgentEvalRow, MyPlayerEvalRow } from '../api/types'
 import { ApiError } from '../api/client'
 import { Badge, EmptyState, Spinner } from './ui'
 import { useToast } from './toastContext'
 
-const POSITIONS = ['', 'QB', 'RB', 'WR', 'TE', 'K', 'DEF']
-
-type SortKey = 'ros_points' | 'ppg' | 'vor' | 'trade_value'
-
-const SORT_COLUMNS: { key: SortKey; label: string }[] = [
-  { key: 'ros_points', label: 'ROS Pts' },
-  { key: 'ppg', label: 'PPG' },
-  { key: 'vor', label: 'VOR' },
-  { key: 'trade_value', label: 'Value' },
+const POSITION_OPTIONS: { value: string; label: string }[] = [
+  { value: '', label: 'All' },
+  { value: 'QB', label: 'QB' },
+  { value: 'RB', label: 'RB' },
+  { value: 'WR', label: 'WR' },
+  { value: 'TE', label: 'TE' },
+  { value: 'FLEX', label: 'W/R/T (Flex)' },
+  { value: 'K', label: 'K' },
+  { value: 'DEF', label: 'DEF' },
 ]
+
+type SortKey = 'week_points' | 'ros_points' | 'ppg' | 'vor' | 'trade_value' | 'week_delta'
 
 function formatNum(n: number | null | undefined): string {
   if (n === null || n === undefined) return '—'
   return n.toFixed(1)
 }
 
+function renderDelta(value: number | null | undefined) {
+  if (value === null || value === undefined) return ''
+  return value > 0 ? (
+    <span className="delta-positive">+{formatNum(value)}</span>
+  ) : (
+    <span className="delta-muted">{formatNum(value)}</span>
+  )
+}
+
 export function FreeAgentsPanel({ leagueKey }: { leagueKey: string }) {
   const [position, setPosition] = useState('')
   const [limit, setLimit] = useState(50)
   const [rows, setRows] = useState<FreeAgentEvalRow[] | null>(null)
+  const [myPlayers, setMyPlayers] = useState<MyPlayerEvalRow[]>([])
+  const [week, setWeek] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
   const [sortKey, setSortKey] = useState<SortKey>('vor')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
@@ -35,11 +48,17 @@ export function FreeAgentsPanel({ leagueKey }: { leagueKey: string }) {
     setLoading(true)
     getFreeAgentsEval(leagueKey, position || undefined, limit)
       .then((data) => {
-        if (!cancelled) setRows(data.rows)
+        if (!cancelled) {
+          setRows(data.rows)
+          setMyPlayers(data.my_players || [])
+          setWeek(data.week ?? null)
+        }
       })
       .catch((err: unknown) => {
         if (!cancelled) {
           setRows([])
+          setMyPlayers([])
+          setWeek(null)
           showError(err instanceof ApiError ? err.message : 'Failed to load free agents')
         }
       })
@@ -74,15 +93,30 @@ export function FreeAgentsPanel({ leagueKey }: { leagueKey: string }) {
     }
   }
 
+  function sortHeader(key: SortKey, label: string) {
+    return (
+      <button
+        type="button"
+        className={`sort-header${sortKey === key ? ' sort-header-active' : ''}`}
+        onClick={() => handleSort(key)}
+      >
+        {label}
+        {sortKey === key && <span className="sort-arrow">{sortDir === 'asc' ? ' ▲' : ' ▼'}</span>}
+      </button>
+    )
+  }
+
+  const weekPtsLabel = week != null ? `Wk ${week} Pts` : 'Wk Pts'
+
   return (
     <div className="free-agents">
       <div className="field-row">
         <label className="field">
           <span className="field-label">Position</span>
           <select className="field-input" value={position} onChange={(e) => setPosition(e.target.value)}>
-            {POSITIONS.map((p) => (
-              <option key={p || 'all'} value={p}>
-                {p || 'All'}
+            {POSITION_OPTIONS.map((opt) => (
+              <option key={opt.value || 'all'} value={opt.value}>
+                {opt.label}
               </option>
             ))}
           </select>
@@ -103,6 +137,29 @@ export function FreeAgentsPanel({ leagueKey }: { leagueKey: string }) {
         VOR is points above a replacement-level player at the position over the rest of season.
       </p>
 
+      {myPlayers.length > 0 && (
+        <div className="my-players-strip">
+          {myPlayers.map((p) => (
+            <div
+              key={p.player_id}
+              className={`my-player-card${p.is_starter ? ' my-player-card-starter' : ' my-player-card-bench'}`}
+            >
+              <div className="my-player-card-top">
+                <span className="roster-player-name">{p.full_name}</span>
+                <Badge tone={p.is_starter ? 'accent' : 'neutral'}>
+                  {p.is_starter ? p.starter_slot || p.position : 'Bench'}
+                </Badge>
+              </div>
+              <div className="my-player-card-meta">
+                <span>{p.position}</span>
+                <span>Wk {formatNum(p.week_points)}</span>
+                <span>ROS {formatNum(p.ros_points)}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {loading && (
         <div className="loading-row">
           <Spinner /> Loading free agents…
@@ -118,20 +175,14 @@ export function FreeAgentsPanel({ leagueKey }: { leagueKey: string }) {
               <tr>
                 <th>Player</th>
                 <th>Pos</th>
-                {SORT_COLUMNS.map((col) => (
-                  <th key={col.key}>
-                    <button
-                      type="button"
-                      className={`sort-header${sortKey === col.key ? ' sort-header-active' : ''}`}
-                      onClick={() => handleSort(col.key)}
-                    >
-                      {col.label}
-                      {sortKey === col.key && <span className="sort-arrow">{sortDir === 'asc' ? ' ▲' : ' ▼'}</span>}
-                    </button>
-                  </th>
-                ))}
+                <th>{sortHeader('week_points', weekPtsLabel)}</th>
+                <th>{sortHeader('ros_points', 'ROS Pts')}</th>
+                <th>{sortHeader('ppg', 'PPG')}</th>
+                <th>{sortHeader('vor', 'VOR')}</th>
+                <th>{sortHeader('week_delta', 'Wk vs starters')}</th>
+                <th>ROS vs starters</th>
+                <th>{sortHeader('trade_value', 'Value')}</th>
                 <th>Trending</th>
-                <th>vs my starters</th>
               </tr>
             </thead>
             <tbody>
@@ -148,25 +199,15 @@ export function FreeAgentsPanel({ leagueKey }: { leagueKey: string }) {
                     </div>
                   </td>
                   <td>{row.position}</td>
+                  <td>{formatNum(row.week_points)}</td>
                   <td>{formatNum(row.ros_points)}</td>
                   <td>{formatNum(row.ppg)}</td>
                   <td>{formatNum(row.vor)}</td>
+                  <td>{renderDelta(row.week_delta)}</td>
+                  <td>{renderDelta(row.my_worst_starter_delta)}</td>
                   <td>{row.trade_value != null ? formatNum(row.trade_value) : '—'}</td>
                   <td>
-                    {row.trending_add != null ? (
-                      <Badge tone="accent">+{row.trending_add} adds</Badge>
-                    ) : (
-                      '—'
-                    )}
-                  </td>
-                  <td>
-                    {row.my_worst_starter_delta == null ? (
-                      ''
-                    ) : row.my_worst_starter_delta > 0 ? (
-                      <span className="delta-positive">+{formatNum(row.my_worst_starter_delta)}</span>
-                    ) : (
-                      <span className="delta-muted">{formatNum(row.my_worst_starter_delta)}</span>
-                    )}
+                    {row.trending_add != null ? <Badge tone="accent">+{row.trending_add} adds</Badge> : '—'}
                   </td>
                 </tr>
               ))}

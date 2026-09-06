@@ -108,12 +108,45 @@ export interface FreeAgentEvalRow {
   trade_value: number | null
   trending_add: number | null
   my_worst_starter_delta: number | null
+  week_points: number | null
+  week_delta: number | null
+}
+
+export interface MyPlayerEvalRow {
+  player_id: string
+  full_name: string
+  position: string
+  nfl_team: string | null
+  injury_status: InjuryStatus
+  ros_points: number
+  ppg: number
+  week_points: number | null
+  is_starter: boolean
+  starter_slot: string | null
 }
 
 export interface FreeAgentsEvalResponse {
   league_key: string
   season: number
+  week: number | null
+  my_players: MyPlayerEvalRow[]
   rows: FreeAgentEvalRow[]
+}
+
+export interface LineupPlayer {
+  slot?: string
+  player_id: string
+  full_name: string
+  position: string
+  nfl_team: string | null
+  week_points: number | null
+  ros_points: number
+}
+
+export interface TeamLineupResponse {
+  week: number | null
+  starters: LineupPlayer[]
+  bench: LineupPlayer[]
 }
 
 export interface TradeSidePayload {
@@ -165,6 +198,7 @@ export type DataSourceId =
   | 'sleeper_trending'
   | 'fantasycalc'
   | 'espn_projections'
+  | 'espn_week_projections'
 
 export interface DataRefreshResult {
   resource: string

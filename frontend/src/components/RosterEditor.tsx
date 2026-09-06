@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { addRosterPlayer, getRoster, removeRosterPlayer, searchPlayers } from '../api/endpoints'
-import type { PlayerSearchResult, RosterPlayer } from '../api/types'
+import { addRosterPlayer, getRoster, getTeamLineup, removeRosterPlayer, searchPlayers } from '../api/endpoints'
+import type { LineupPlayer, PlayerSearchResult, RosterPlayer, TeamLineupResponse } from '../api/types'
 import { ApiError } from '../api/client'
 import { Badge, Button, EmptyState, Spinner, TextField } from './ui'
 import { useToast } from './toastContext'
@@ -24,17 +24,52 @@ function groupByPosition(roster: RosterPlayer[]): [string, RosterPlayer[]][] {
   return entries
 }
 
+type SlottedPlayer = { player: RosterPlayer; slot: string | null; isStarter: boolean }
+
+function toRosterPlayer(lp: LineupPlayer): RosterPlayer {
+  return {
+    player_id: lp.player_id,
+    full_name: lp.full_name,
+    position: lp.position,
+    nfl_team: lp.nfl_team,
+    injury_status: null,
+  }
+}
+
+function buildSlottedRoster(roster: RosterPlayer[], lineup: TeamLineupResponse): {
+  starters: SlottedPlayer[]
+  bench: SlottedPlayer[]
+} {
+  const rosterById = new Map(roster.map((p) => [p.player_id, p]))
+  const seen = new Set<string>()
+  const starters: SlottedPlayer[] = lineup.starters.map((s) => {
+    seen.add(s.player_id)
+    return { player: rosterById.get(s.player_id) ?? toRosterPlayer(s), slot: s.slot ?? null, isStarter: true }
+  })
+  const bench: SlottedPlayer[] = lineup.bench.map((b) => {
+    seen.add(b.player_id)
+    return { player: rosterById.get(b.player_id) ?? toRosterPlayer(b), slot: null, isStarter: false }
+  })
+  for (const p of roster) {
+    if (!seen.has(p.player_id)) bench.push({ player: p, slot: null, isStarter: false })
+  }
+  return { starters, bench }
+}
+
 export function RosterEditor({
+  leagueKey,
   teamId,
   teamName,
   editable,
 }: {
+  leagueKey: string
   teamId: number
   teamName: string
   editable: boolean
 }) {
   const { showError, showSuccess } = useToast()
   const [roster, setRoster] = useState<RosterPlayer[] | null>(null)
+  const [lineup, setLineup] = useState<TeamLineupResponse | null>(null)
   const [query, setQuery] = useState('')
   const [positionFilter, setPositionFilter] = useState('')
   const [results, setResults] = useState<PlayerSearchResult[] | null>(null)
@@ -52,11 +87,22 @@ export function RosterEditor({
       })
   }
 
+  function loadLineup() {
+    getTeamLineup(leagueKey, teamId)
+      .then(setLineup)
+      .catch(() => {
+        // Non-fatal: fall back to a plain roster listing without slot badges.
+        setLineup(null)
+      })
+  }
+
   useEffect(() => {
     setRoster(null)
+    setLineup(null)
     loadRoster()
+    loadLineup()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [teamId])
+  }, [teamId, leagueKey])
 
   useEffect(() => {
     if (!editable) return
@@ -88,6 +134,7 @@ export function RosterEditor({
       await addRosterPlayer(teamId, player.id)
       showSuccess(`Added ${player.full_name}`)
       loadRoster()
+      loadLineup()
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
         showError(`${player.full_name} is already rostered in this league`)
@@ -105,6 +152,7 @@ export function RosterEditor({
       await removeRosterPlayer(teamId, player.player_id)
       showSuccess(`Removed ${player.full_name}`)
       loadRoster()
+      loadLineup()
     } catch (err) {
       showError(err instanceof ApiError ? err.message : 'Failed to remove player')
     } finally {
@@ -112,9 +160,30 @@ export function RosterEditor({
     }
   }
 
+  const slotted = roster !== null && roster.length > 0 && lineup ? buildSlottedRoster(roster, lineup) : null
+
+  function renderPlayerRow({ player, slot, isStarter }: SlottedPlayer) {
+    return (
+      <li key={player.player_id} className="roster-list-item">
+        <Badge tone={isStarter ? 'accent' : 'neutral'}>{isStarter ? slot || player.position : 'BN'}</Badge>
+        <span className="roster-player-name">{player.full_name}</span>
+        <span className="roster-player-meta">
+          {player.nfl_team || 'FA'}
+          {player.injury_status && <Badge tone="warning">{player.injury_status}</Badge>}
+        </span>
+        {editable && (
+          <Button variant="danger" onClick={() => handleRemove(player)} busy={removingId === player.player_id}>
+            Remove
+          </Button>
+        )}
+      </li>
+    )
+  }
+
   return (
     <div className="roster-editor">
       <h3>{teamName} roster</h3>
+      <p className="field-hint roster-caption">Starters = optimal projected lineup; syncs with Yahoo later.</p>
 
       {roster === null && (
         <div className="loading-row">
@@ -124,7 +193,20 @@ export function RosterEditor({
 
       {roster !== null && roster.length === 0 && <EmptyState>No players rostered yet.</EmptyState>}
 
-      {roster !== null && roster.length > 0 && (
+      {roster !== null && roster.length > 0 && slotted && (
+        <div className="roster-groups">
+          <div className="roster-group">
+            <div className="roster-group-title">Starters</div>
+            <ul className="roster-list">{slotted.starters.map((entry) => renderPlayerRow(entry))}</ul>
+          </div>
+          <div className="roster-group">
+            <div className="roster-group-title">Bench</div>
+            <ul className="roster-list">{slotted.bench.map((entry) => renderPlayerRow(entry))}</ul>
+          </div>
+        </div>
+      )}
+
+      {roster !== null && roster.length > 0 && !slotted && (
         <div className="roster-groups">
           {groupByPosition(roster).map(([pos, players]) => (
             <div className="roster-group" key={pos}>

@@ -31,6 +31,11 @@ const SOURCES: { id: DataSourceId; name: string; description: string }[] = [
     name: 'ESPN projections',
     description: 'Full-season player projections from ESPN (free, no key required).',
   },
+  {
+    id: 'espn_week_projections',
+    name: 'ESPN weekly projections',
+    description: 'Current-week player projections from ESPN.',
+  },
 ]
 
 function toneForStatus(status: string | undefined): 'neutral' | 'success' | 'warning' | 'accent' {

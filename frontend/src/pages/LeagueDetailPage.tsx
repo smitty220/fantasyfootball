@@ -272,7 +272,12 @@ export function LeagueDetailPage() {
 
           <Card>
             {selectedTeam ? (
-              <RosterEditor teamId={selectedTeam.id} teamName={selectedTeam.name} editable={isManual} />
+              <RosterEditor
+                leagueKey={leagueKey}
+                teamId={selectedTeam.id}
+                teamName={selectedTeam.name}
+                editable={isManual}
+              />
             ) : (
               <EmptyState>Select a team to view its roster.</EmptyState>
             )}

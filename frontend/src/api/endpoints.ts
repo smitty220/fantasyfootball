@@ -13,6 +13,7 @@ import type {
   PlayerSearchResult,
   RosterPlayer,
   Team,
+  TeamLineupResponse,
   TradeEvaluatePayload,
   TradeEvaluateResponse,
   UpdateManualLeaguePayload,
@@ -87,6 +88,12 @@ export function getFreeAgentsEval(
 ): Promise<FreeAgentsEvalResponse> {
   return apiGet(
     `/api/leagues/${encodeURIComponent(leagueKey)}/evaluate/free-agents${buildQuery({ position, limit })}`,
+  )
+}
+
+export function getTeamLineup(leagueKey: string, teamId: number): Promise<TeamLineupResponse> {
+  return apiGet(
+    `/api/leagues/${encodeURIComponent(leagueKey)}/evaluate/teams/${teamId}/lineup`,
   )
 }
 
