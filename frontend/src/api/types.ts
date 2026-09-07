@@ -143,6 +143,7 @@ export interface LineupPlayer {
   injury_status: InjuryStatus
   percent_owned: number | null
   percent_started: number | null
+  better_fa_week_points: number | null
 }
 
 export interface LineupSlotEntry {

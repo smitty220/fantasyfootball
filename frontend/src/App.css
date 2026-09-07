@@ -925,9 +925,34 @@ a.tab {
   font-size: 13px;
   color: var(--text-h);
   min-width: 0;
+}
+
+.lineup-row-name-text {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
+}
+
+.fa-upgrade-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--warning);
+  background: var(--warning-bg);
+  color: var(--warning);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.fa-upgrade-chip:hover {
+  filter: brightness(1.05);
 }
 
 .lineup-row-team {
@@ -1119,6 +1144,91 @@ a.tab {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+/* Matchup preview */
+.matchup-table {
+  table-layout: fixed;
+}
+
+.matchup-table td {
+  vertical-align: middle;
+  padding: 8px;
+}
+
+.matchup-cell {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.matchup-cell-lead {
+  background: var(--success-bg);
+}
+
+.matchup-cell-lead .matchup-cell-value {
+  color: var(--success);
+}
+
+.matchup-slot {
+  width: 70px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.matchup-cell-name {
+  font-weight: 500;
+  font-size: 14px;
+  margin-right: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.matchup-cell-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  margin-left: auto;
+  padding-left: 8px;
+  flex-shrink: 0;
+}
+
+.matchup-totals {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding-top: 10px;
+  font-size: 15px;
+}
+
+.matchup-total-side {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.matchup-total-side strong {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-h);
+}
+
+.matchup-total-lead strong {
+  color: var(--success);
+}
+
+.matchup-winner {
+  margin: 8px 0 0;
+  font-weight: 600;
+  color: var(--text-h);
+  text-align: center;
 }
 
 /* Source picker */

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { createTeam, deleteTeam, getLeagues, getTeams, updateTeam } from '../api/endpoints'
 import type { League, Team } from '../api/types'
 import { ApiError } from '../api/client'
@@ -13,12 +13,14 @@ type Tab = 'teams' | 'free-agents'
 
 export function LeagueDetailPage() {
   const { leagueKey = '' } = useParams<{ leagueKey: string }>()
+  const [searchParams] = useSearchParams()
   const { showError, showSuccess } = useToast()
 
   const [league, setLeague] = useState<League | null | undefined>(undefined)
   const [teams, setTeams] = useState<Team[] | null>(null)
   const [selectedTeamId, setSelectedTeamId] = useState<number | null>(null)
-  const [tab, setTab] = useState<Tab>('teams')
+  const [tab, setTab] = useState<Tab>(() => (searchParams.get('tab') === 'free-agents' ? 'free-agents' : 'teams'))
+  const [initialFaPosition] = useState<string | undefined>(() => searchParams.get('position') || undefined)
   const [editingTeamId, setEditingTeamId] = useState<number | null>(null)
   const [editName, setEditName] = useState('')
   const [showAddForm, setShowAddForm] = useState(false)
@@ -160,6 +162,9 @@ export function LeagueDetailPage() {
         <Link to={`/leagues/${encodeURIComponent(leagueKey)}/trade`} className="tab">
           Trade analyzer
         </Link>
+        <Link to={`/leagues/${encodeURIComponent(leagueKey)}/matchup`} className="tab">
+          Matchup preview
+        </Link>
       </div>
 
       {tab === 'teams' && (
@@ -287,7 +292,7 @@ export function LeagueDetailPage() {
 
       {tab === 'free-agents' && (
         <Card>
-          <FreeAgentsPanel leagueKey={leagueKey} />
+          <FreeAgentsPanel leagueKey={leagueKey} initialPosition={initialFaPosition} />
         </Card>
       )}
     </div>

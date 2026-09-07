@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import type { DragEvent, KeyboardEvent } from 'react'
+import type { DragEvent, KeyboardEvent, MouseEvent } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   addRosterPlayer,
   clearLineup,
@@ -98,6 +99,7 @@ export function RosterEditor({
   editable: boolean
 }) {
   const { showError, showSuccess } = useToast()
+  const navigate = useNavigate()
   const [roster, setRoster] = useState<RosterPlayer[] | null>(null)
   const [lineup, setLineup] = useState<TeamLineupResponse | null>(null)
   const [query, setQuery] = useState('')
@@ -353,15 +355,39 @@ export function RosterEditor({
     )
   }
 
+  function handleFaFlagClick(e: MouseEvent, player: LineupPlayer) {
+    e.stopPropagation()
+    navigate(`/leagues/${encodeURIComponent(leagueKey)}?tab=free-agents&position=${encodeURIComponent(player.position)}`)
+  }
+
+  function renderFaFlag(player: LineupPlayer) {
+    if (player.better_fa_week_points == null) return null
+    const value = player.better_fa_week_points
+    return (
+      <button
+        type="button"
+        className="fa-upgrade-chip"
+        title={`A free agent ${player.position} projects ${value.toFixed(1)} pts this week — click to view`}
+        draggable={false}
+        onMouseDown={(e) => e.stopPropagation()}
+        onDragStart={(e) => e.stopPropagation()}
+        onClick={(e) => handleFaFlagClick(e, player)}
+      >
+        ▲ FA {value.toFixed(1)}
+      </button>
+    )
+  }
+
   function renderPlayerCells(player: LineupPlayer) {
     return (
       <>
         <span className="lineup-row-pos">{player.position}</span>
         <span className="lineup-row-name">
-          {player.full_name}
+          <span className="lineup-row-name-text">{player.full_name}</span>
           {player.injury_status && (
             <Badge tone="warning">{player.injury_status}</Badge>
           )}
+          {renderFaFlag(player)}
         </span>
         <span className="lineup-row-team">{player.nfl_team || 'FA'}</span>
         <span className="lineup-row-stat">{fmtPts(player.week_points)}</span>

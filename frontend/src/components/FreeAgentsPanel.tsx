@@ -45,8 +45,14 @@ function renderDelta(value: number | null | undefined) {
   )
 }
 
-export function FreeAgentsPanel({ leagueKey }: { leagueKey: string }) {
-  const [position, setPosition] = useState('')
+export function FreeAgentsPanel({
+  leagueKey,
+  initialPosition,
+}: {
+  leagueKey: string
+  initialPosition?: string
+}) {
+  const [position, setPosition] = useState(initialPosition ?? '')
   const [limit, setLimit] = useState(50)
   const [rows, setRows] = useState<FreeAgentEvalRow[] | null>(null)
   const [myPlayers, setMyPlayers] = useState<MyPlayerEvalRow[]>([])
