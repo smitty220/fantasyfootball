@@ -177,6 +177,9 @@ ESPN_STAT_ID_TO_CANONICAL: dict[str, str] = {
     "4": "pass_td",
     "19": "pass_2pt",
     "20": "pass_int",
+    # times sacked (verified live 2026-09-06: Josh Allen season value ~30-36,
+    # matching his real-world sack totals)
+    "64": "pass_sacked",
     # rushing
     "23": "rush_att",
     "24": "rush_yds",

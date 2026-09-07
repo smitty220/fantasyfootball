@@ -20,6 +20,8 @@ CANONICAL_STATS: frozenset[str] = frozenset(
         "pass_td",
         "pass_int",
         "pass_2pt",
+        "pass_sacked",  # times sacked; only ESPN projects this today
+
         # rushing
         "rush_att",
         "rush_yds",
@@ -33,6 +35,7 @@ CANONICAL_STATS: frozenset[str] = frozenset(
         # misc offense
         "fum_lost",
         "ret_td",
+        "ret_yds",  # kick/punt return yards; no current source projects these
         # kicking
         "fg_0_19",
         "fg_20_29",
