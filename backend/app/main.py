@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -10,10 +11,32 @@ from app.routers import auth, data, evaluate, health, leagues, manual, players
 FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Imported lazily (not at module top) so app.services.scheduler - and the
+    # sync-service modules it imports, e.g. app.services.fantasypros - are
+    # first imported *after* run_migrations() has run. Alembic's env.py calls
+    # logging.config.fileConfig(...) (disable_existing_loggers=True by
+    # default), which silently disables any logger already created at that
+    # point; importing eagerly at module top previously caused
+    # "app.services.scheduler" (and fantasypros) log records to vanish.
+    from app.services.scheduler import shutdown_scheduler, start_scheduler
+
+    # start_scheduler() is idempotent and a no-op when SCHEDULER_ENABLED is
+    # false, so this is safe under uvicorn --reload (which re-enters lifespan
+    # in the reloader's child process) and under a test suite that builds the
+    # app repeatedly (tests force SCHEDULER_ENABLED=False, see conftest.py).
+    start_scheduler()
+    try:
+        yield
+    finally:
+        shutdown_scheduler()
+
+
 def create_app() -> FastAPI:
     run_migrations()
 
-    app = FastAPI(title="Gridiron HQ", version="0.1.0")
+    app = FastAPI(title="Gridiron HQ", version="0.1.0", lifespan=lifespan)
 
     app.include_router(health.router)
     app.include_router(auth.router)

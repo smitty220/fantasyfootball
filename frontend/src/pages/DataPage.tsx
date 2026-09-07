@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { getDataStatus, refreshDataSource } from '../api/endpoints'
-import type { DataSourceId, DataStatusRow } from '../api/types'
+import { getDataSchedule, getDataStatus, refreshDataSource } from '../api/endpoints'
+import type { DataScheduleRow, DataSourceId, DataStatusRow } from '../api/types'
 import { ApiError } from '../api/client'
 import { Badge, Button, Card } from '../components/ui'
 import { useToast } from '../components/toastContext'
@@ -48,6 +48,35 @@ const SOURCES: { id: DataSourceId; name: string; description: string }[] = [
   },
 ]
 
+// Human interval label per source, matching the trigger cadence configured
+// in backend/app/services/scheduler.py. Kept here (rather than returned by
+// the API) since it's a fixed, display-only fact about the schedule.
+const REFRESH_INTERVAL_LABEL: Record<DataSourceId, string> = {
+  crosswalk: 'week',
+  sleeper_players: 'day',
+  sleeper_trending: '6h',
+  fantasycalc: 'day',
+  espn_projections: '12h',
+  espn_week_projections: '12h',
+  fantasypros_projections: '12h',
+  fantasypros_week_projections: '12h',
+}
+
+function formatCountdown(nextRunAt: string | null | undefined): string | null {
+  if (!nextRunAt) return null
+  const target = new Date(nextRunAt).getTime()
+  if (Number.isNaN(target)) return null
+  const diffMs = target - Date.now()
+  if (diffMs <= 0) return 'due now'
+  const totalMinutes = Math.round(diffMs / 60000)
+  const days = Math.floor(totalMinutes / (60 * 24))
+  const hours = Math.floor((totalMinutes % (60 * 24)) / 60)
+  const minutes = totalMinutes % 60
+  if (days > 0) return `${days}d ${hours}h`
+  if (hours > 0) return `${hours}h ${minutes}m`
+  return `${minutes}m`
+}
+
 function toneForStatus(status: string | undefined): 'neutral' | 'success' | 'warning' | 'accent' {
   if (!status) return 'neutral'
   const s = status.toLowerCase()
@@ -66,6 +95,7 @@ function formatTime(value: string | null | undefined): string {
 
 export function DataPage() {
   const [statusByResource, setStatusByResource] = useState<Record<string, DataStatusRow>>({})
+  const [scheduleBySource, setScheduleBySource] = useState<Record<string, DataScheduleRow>>({})
   const [running, setRunning] = useState<Record<string, boolean>>({})
   const [resultMessage, setResultMessage] = useState<Record<string, string>>({})
   const { showError, showSuccess } = useToast()
@@ -82,8 +112,21 @@ export function DataPage() {
       })
   }
 
+  function loadSchedule() {
+    getDataSchedule()
+      .then((rows) => {
+        const map: Record<string, DataScheduleRow> = {}
+        for (const row of rows) map[row.source] = row
+        setScheduleBySource(map)
+      })
+      .catch(() => {
+        // Non-fatal: auto-refresh line just shows as "off" if this fails.
+      })
+  }
+
   useEffect(() => {
     loadStatus()
+    loadSchedule()
   }, [])
 
   async function handleRefresh(id: DataSourceId) {
@@ -116,8 +159,14 @@ export function DataPage() {
       <div className="data-source-list">
         {SOURCES.map((source) => {
           const status = statusByResource[source.id]
+          const schedule = scheduleBySource[source.id]
           const isRunning = running[source.id] || status?.status?.toLowerCase().includes('run')
           const message = resultMessage[source.id] || status?.message
+          const intervalLabel = REFRESH_INTERVAL_LABEL[source.id]
+          const countdown = schedule?.scheduled ? formatCountdown(schedule.next_run_at) : null
+          const autoRefreshText = schedule?.scheduled
+            ? `Auto-refresh: every ${intervalLabel}${countdown ? ` · next run in ${countdown}` : ''}`
+            : 'Auto-refresh: off'
           return (
             <Card key={source.id} className="data-source-card">
               <div className="data-source-header">
@@ -133,6 +182,7 @@ export function DataPage() {
                 <Badge tone={toneForStatus(status?.status)}>{status?.status || 'unknown'}</Badge>
                 <span className="field-hint">Last finished: {formatTime(status?.finished_at)}</span>
               </div>
+              <div className="field-hint">{autoRefreshText}</div>
               {message && <div className="data-source-message">{message}</div>}
             </Card>
           )

@@ -70,6 +70,19 @@ def refresh_source(source: str, db: Session = Depends(get_db)) -> SyncLog:
     return log
 
 
+class ScheduleStatusOut(BaseModel):
+    source: str
+    scheduled: bool
+    next_run_at: datetime | None = None
+
+
+@router.get("/schedule", response_model=list[ScheduleStatusOut])
+def data_schedule() -> list[dict]:
+    from app.services.scheduler import schedule_status
+
+    return schedule_status()
+
+
 @router.get("/status", response_model=list[SyncLogOut])
 def data_status(db: Session = Depends(get_db)) -> list[SyncLog]:
     rows = (

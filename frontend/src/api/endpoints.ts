@@ -3,6 +3,7 @@ import type {
   CreateManualLeaguePayload,
   CreateTeamPayload,
   DataRefreshResult,
+  DataScheduleRow,
   DataSourceId,
   DataStatusRow,
   FreeAgent,
@@ -128,6 +129,10 @@ export function refreshDataSource(source: DataSourceId): Promise<DataRefreshResu
 
 export function getDataStatus(): Promise<DataStatusRow[]> {
   return apiGet('/api/data/status')
+}
+
+export function getDataSchedule(): Promise<DataScheduleRow[]> {
+  return apiGet('/api/data/schedule')
 }
 
 export function getProjectionSources(): Promise<ProjectionSourcesResponse> {

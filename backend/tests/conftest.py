@@ -20,6 +20,21 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+@pytest.fixture(autouse=True)
+def _disable_scheduler(monkeypatch):
+    """Never let the background scheduler spin up real jobs in tests.
+
+    The ``client`` fixture opens ``TestClient`` in a ``with`` block, which
+    runs the app's lifespan (see app.main.lifespan) and therefore calls
+    ``start_scheduler()``/``shutdown_scheduler()`` once per test that uses
+    it. ``start_scheduler`` checks ``settings.SCHEDULER_ENABLED`` at call
+    time, so flipping it off here (autouse, so it applies even to tests that
+    don't use ``client``) keeps it a no-op everywhere without having to touch
+    every test.
+    """
+    monkeypatch.setattr(settings, "SCHEDULER_ENABLED", False)
+
+
 @pytest.fixture()
 def db_session(tmp_path):
     engine = create_engine(

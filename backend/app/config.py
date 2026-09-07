@@ -22,5 +22,10 @@ class Settings(BaseSettings):
 
     DATABASE_URL: str = "sqlite:///../data/app.db"
 
+    # Background auto-refresh of data sources (see app.services.scheduler).
+    # Tests force this to False (see tests/conftest.py) so the suite never
+    # spins up real APScheduler jobs.
+    SCHEDULER_ENABLED: bool = True
+
 
 settings = Settings()

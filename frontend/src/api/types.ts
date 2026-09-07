@@ -247,6 +247,12 @@ export interface DataStatusRow {
   message?: string | null
 }
 
+export interface DataScheduleRow {
+  source: string
+  scheduled: boolean
+  next_run_at: string | null
+}
+
 export interface YahooStatus {
   connected: boolean
   expires_at?: string | null
