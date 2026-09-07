@@ -25,6 +25,15 @@ whatever week the ingestion last stored -- see :func:`current_projection_week`.
 (:func:`_fill_lineup` on ROS points). One starter set is used for every
 comparison, weekly and ROS alike, so the "who would this pickup replace?"
 answer never depends on which column you are looking at.
+
+*Projection sources* are selectable. Every entry point takes an optional
+``sources``: ``None`` keeps the historical behaviour (the best available source
+in :data:`SOURCE_PRIORITY` order wins outright), while an explicit subset of
+:data:`AVAILABLE_SOURCES` *averages* the selected sources -- see
+:func:`_blend_points` for why the average is taken over league-scored points
+rather than over raw stat lines. Whichever mode is in play, every number in a
+response comes from it: replacement levels, VOR, optimal lineups, weekly and
+ROS deltas and trade totals all read the same blended points.
 """
 
 from __future__ import annotations
@@ -50,6 +59,9 @@ from app.services.yahoo.sync import current_nfl_season
 
 #: Projection sources we trust, best first.
 SOURCE_PRIORITY: tuple[str, ...] = ("fantasypros", "espn")
+
+#: Sources a caller may pick from, in :data:`SOURCE_PRIORITY` order.
+AVAILABLE_SOURCES: tuple[str, ...] = SOURCE_PRIORITY
 
 #: Positions that can start in a standard lineup.
 STARTABLE_POSITIONS: tuple[str, ...] = ("QB", "RB", "WR", "TE", "K", "DEF")
@@ -126,6 +138,73 @@ def _pick_best(rows: Iterable[Projection]) -> Projection | None:
     return None
 
 
+def validate_sources(raw: str | None) -> tuple[str, ...] | None:
+    """Parse a ``"fantasypros,espn"`` selection into a source tuple.
+
+    Case-insensitive and whitespace-tolerant; duplicates collapse and the
+    result is ordered by :data:`AVAILABLE_SOURCES` so the same selection always
+    reads back the same way. ``None``/empty means "no selection", i.e. the
+    priority behaviour, and an unknown token raises :class:`ValueError` naming
+    the offender.
+    """
+    if raw is None:
+        return None
+    tokens = [token.strip().lower() for token in raw.split(",")]
+    tokens = [token for token in tokens if token]
+    if not tokens:
+        return None
+
+    for token in tokens:
+        if token not in AVAILABLE_SOURCES:
+            raise ValueError(
+                f"Unknown projection source '{token}'; choose from "
+                + ", ".join(AVAILABLE_SOURCES)
+            )
+    chosen = set(tokens)
+    return tuple(source for source in AVAILABLE_SOURCES if source in chosen)
+
+
+def _selected_sources(sources: Sequence[str] | None) -> tuple[str, ...]:
+    """The sources to *read* rows from: the selection, else every trusted one."""
+    return tuple(sources) if sources else SOURCE_PRIORITY
+
+
+def _blend_points(
+    rows: Iterable[Projection],
+    rules: scoring.ScoringRules,
+    sources: Sequence[str] | None,
+) -> float:
+    """League points for one player from ``rows`` (all the same horizon).
+
+    With no selection the single best row wins, exactly as it always has. With
+    a selection every chosen source that *has* a row is scored under the
+    league's rules and the results are averaged; a source with no row for this
+    player is simply left out of that player's average rather than counted as
+    zero, so a player only ESPN projects is not penalised for FantasyPros'
+    silence.
+
+    The average is taken over **league-scored points, not raw stats**: sources
+    publish different stat granularities (one splits rushing and receiving
+    touchdowns, another reports a single total; one carries return yards, the
+    next does not), so averaging stat lines would blend fields that do not mean
+    the same thing -- and would silently drop any stat a source omits. Points
+    are the one quantity every source's line reduces to under the same rules,
+    which makes them the comparable unit.
+    """
+    if not sources:
+        return league_points(_pick_best(rows), rules)
+
+    by_source = {row.source: row for row in rows}
+    scored = [
+        league_points(by_source[source], rules)
+        for source in sources
+        if source in by_source
+    ]
+    if not scored:
+        return 0.0
+    return sum(scored) / len(scored)
+
+
 def league_points(
     projection: Projection | None, rules: scoring.ScoringRules
 ) -> float:
@@ -135,56 +214,102 @@ def league_points(
     return scoring.score_stat_line(projection.stat_json, rules)
 
 
-def current_projection_week(db: Session, season: int) -> int | None:
+def current_projection_week(
+    db: Session, season: int, sources: Sequence[str] | None = None
+) -> int | None:
     """The week our weekly projections currently describe, if any.
 
     Weekly ingestion only ever stores the *current* week (see
     ``espn.refresh_week_projections``), so the highest ``week`` on file is the
-    latest one. ``None`` when the season has no weekly rows at all.
+    latest one. ``None`` when the season has no weekly rows at all -- or, when
+    ``sources`` narrows the selection, none from the chosen sources.
     """
     week = (
         db.query(func.max(Projection.week))
         .filter(
             Projection.season == season,
             Projection.week.isnot(None),
-            Projection.source.in_(SOURCE_PRIORITY),
+            Projection.source.in_(_selected_sources(sources)),
         )
         .scalar()
     )
     return int(week) if week is not None else None
 
 
-def _projections_for(
+def _projection_points(
     db: Session,
     season: int,
+    rules: scoring.ScoringRules,
     player_ids: Sequence[int] | None = None,
     week: int | None = None,
-) -> dict[int, Projection]:
-    """Best projection per player, in one query.
+    sources: Sequence[str] | None = None,
+) -> dict[int, float]:
+    """League-scored points per player, in one query.
 
     ``week=None`` means the season-long (``Projection.week IS NULL``) rows;
-    ``week=N`` means that single week's rows.
+    ``week=N`` means that single week's rows. Players with no row from the
+    selected sources are *absent* from the mapping rather than mapped to 0, so
+    callers can tell "we have no forecast" from "we forecast nothing"; the ones
+    that want a zero fill do it themselves.
+
+    Multiple sources are combined by :func:`_blend_points`.
     """
     query = db.query(Projection).filter(
         Projection.season == season,
         Projection.week.is_(None) if week is None else Projection.week == week,
-        Projection.source.in_(SOURCE_PRIORITY),
+        Projection.source.in_(_selected_sources(sources)),
     )
     if player_ids is not None:
-        if not player_ids:
+        ids = list({int(pid) for pid in player_ids})
+        if not ids:
             return {}
-        query = query.filter(Projection.player_id.in_(list(player_ids)))
+        query = query.filter(Projection.player_id.in_(ids))
 
     grouped: dict[int, list[Projection]] = {}
     for row in query.all():
         grouped.setdefault(row.player_id, []).append(row)
 
-    best: dict[int, Projection] = {}
-    for player_id, rows in grouped.items():
-        chosen = _pick_best(rows)
-        if chosen is not None:
-            best[player_id] = chosen
-    return best
+    return {
+        player_id: _blend_points(rows, rules, sources)
+        for player_id, rows in grouped.items()
+    }
+
+
+def projection_sources(db: Session, season: int) -> dict:
+    """What each selectable source has on file for ``season``.
+
+    ``{"week", "sources"}``: the week the weekly rows describe (across every
+    source, so the UI can label the column before a source is picked) and, per
+    source in :data:`AVAILABLE_SOURCES`, when its season-long and current-week
+    rows were last fetched. A source with nothing on file is still listed, with
+    null timestamps, so the picker offers the same choices all season.
+    """
+    week = current_projection_week(db, season)
+
+    def latest(source: str, week_value: int | None) -> Any:
+        return (
+            db.query(func.max(Projection.fetched_at))
+            .filter(
+                Projection.source == source,
+                Projection.season == season,
+                Projection.week.is_(None)
+                if week_value is None
+                else Projection.week == week_value,
+            )
+            .scalar()
+        )
+
+    return {
+        "week": week,
+        "sources": [
+            {
+                "source": source,
+                "season_updated_at": latest(source, None),
+                "week_updated_at": latest(source, week) if week is not None else None,
+            }
+            for source in AVAILABLE_SOURCES
+        ],
+    }
 
 
 # --- roster shape ----------------------------------------------------------
@@ -248,7 +373,12 @@ def starter_slots(roster_slots: Mapping[str, int]) -> dict[str, float]:
 # --- replacement level -----------------------------------------------------
 
 
-def replacement_levels(db: Session, league: League, season: int | None = None) -> dict[str, float]:
+def replacement_levels(
+    db: Session,
+    league: League,
+    season: int | None = None,
+    sources: Sequence[str] | None = None,
+) -> dict[str, float]:
     """Points of the first non-startable player at each position.
 
     Every player with a projection (rostered or free agent) is ranked by league
@@ -258,6 +388,10 @@ def replacement_levels(db: Session, league: League, season: int | None = None) -
     A position with no projected players at all gets 0. If the pool is too
     shallow to reach that rank we use the worst projected player at the
     position rather than 0, which keeps VOR meaningful on tiny/partial pools.
+
+    ``sources`` picks which projections the pool is ranked on, so VOR is quoted
+    against a replacement priced the same way as the player it is subtracted
+    from.
     """
     season = season if season is not None else current_nfl_season()
     rules = scoring.league_rules(league.settings_json)
@@ -272,7 +406,7 @@ def replacement_levels(db: Session, league: League, season: int | None = None) -
         .filter(
             Projection.season == season,
             Projection.week.is_(None),
-            Projection.source.in_(SOURCE_PRIORITY),
+            Projection.source.in_(_selected_sources(sources)),
         )
         .all()
     )
@@ -284,7 +418,7 @@ def replacement_levels(db: Session, league: League, season: int | None = None) -
     for position, projections in grouped.values():
         if position not in pools:
             continue
-        pools[position].append(league_points(_pick_best(projections), rules))
+        pools[position].append(_blend_points(projections, rules, sources))
 
     levels: dict[str, float] = {}
     for position, points in pools.items():
@@ -393,6 +527,7 @@ def optimal_lineup_points(
     league: League,
     player_ids: Sequence[int],
     season: int | None = None,
+    sources: Sequence[str] | None = None,
 ) -> float:
     """Points of the best legal lineup buildable from ``player_ids``.
 
@@ -400,22 +535,30 @@ def optimal_lineup_points(
     contribute 0.
     """
     season = season if season is not None else current_nfl_season()
-    points, positions = _points_and_positions(db, league, player_ids, season)
+    points, positions = _points_and_positions(db, league, player_ids, season, sources)
     lineup = _fill_lineup(league_roster_slots(league), points, positions, player_ids)
     return round(sum(points.get(pid, 0.0) for _slot, pid in lineup), 2)
 
 
 def _points_and_positions(
-    db: Session, league: League, player_ids: Sequence[int], season: int
+    db: Session,
+    league: League,
+    player_ids: Sequence[int],
+    season: int,
+    sources: Sequence[str] | None = None,
 ) -> tuple[dict[int, float], dict[int, str | None]]:
+    """ROS points (zero-filled) and positions for ``player_ids``.
+
+    The points mapping covers *every* requested id: a player with no season
+    projection scores 0 here, because a lineup seat they occupy still has to be
+    worth something.
+    """
     ids = list({int(pid) for pid in player_ids})
     if not ids:
         return {}, {}
     rules = scoring.league_rules(league.settings_json)
-    projections = _projections_for(db, season, ids)
-    points = {
-        pid: league_points(projections.get(pid), rules) for pid in ids
-    }
+    scored = _projection_points(db, season, rules, ids, sources=sources)
+    points = {pid: scored.get(pid, 0.0) for pid in ids}
     positions = {
         player.id: player.position
         for player in db.query(Player).filter(Player.id.in_(ids)).all()
@@ -429,6 +572,7 @@ def _week_points(
     player_ids: Sequence[int],
     season: int,
     week: int | None,
+    sources: Sequence[str] | None = None,
 ) -> dict[int, float]:
     """League-scored points from the ``week`` projection, per player.
 
@@ -442,8 +586,10 @@ def _week_points(
         return {}
     rules = scoring.league_rules(league.settings_json)
     return {
-        pid: round(league_points(projection, rules), 2)
-        for pid, projection in _projections_for(db, season, ids, week=week).items()
+        pid: round(points, 2)
+        for pid, points in _projection_points(
+            db, season, rules, ids, week=week, sources=sources
+        ).items()
     }
 
 
@@ -550,11 +696,16 @@ class TeamRoster(NamedTuple):
 
 
 def _team_roster(
-    db: Session, league: League, team_id: int, season: int, week: int | None
+    db: Session,
+    league: League,
+    team_id: int,
+    season: int,
+    week: int | None,
+    sources: Sequence[str] | None = None,
 ) -> TeamRoster:
     ids = _team_player_ids(db, league, team_id)
-    ros_points, positions = _points_and_positions(db, league, ids, season)
-    week_points = _week_points(db, league, ids, season, week)
+    ros_points, positions = _points_and_positions(db, league, ids, season, sources)
+    week_points = _week_points(db, league, ids, season, week, sources)
     roster_slots = league_roster_slots(league)
 
     assignments = manual_lineup(db, team_id)
@@ -640,6 +791,7 @@ def evaluate_free_agents(
     position: str | None = None,
     limit: int = 50,
     season: int | None = None,
+    sources: Sequence[str] | None = None,
 ) -> dict:
     """Rank a league's available players by value over replacement.
 
@@ -647,15 +799,21 @@ def evaluate_free_agents(
     describe (``None`` when no weekly projections are on file), the ranked
     free agents, and my own roster with its starters flagged so a pickup can
     be judged against the player it would actually replace.
+
+    ``sources`` selects which projection sources every number here is built
+    from -- ``None`` for the priority pick, a subset of
+    :data:`AVAILABLE_SOURCES` to average them.
     """
     season = season if season is not None else current_nfl_season()
     rules = scoring.league_rules(league.settings_json)
-    week = current_projection_week(db, season)
+    week = current_projection_week(db, season, sources)
     positions = position_filter(position)
 
     team = _my_team(db, league)
     my_roster = (
-        _team_roster(db, league, team.id, season, week) if team is not None else None
+        _team_roster(db, league, team.id, season, week, sources)
+        if team is not None
+        else None
     )
     worst_ros = (
         _worst_starters(my_roster, my_roster.ros_points) if my_roster is not None else {}
@@ -675,9 +833,9 @@ def evaluate_free_agents(
         return payload
 
     player_ids = [player.id for player in players]
-    projections = _projections_for(db, season, player_ids)
-    week_points = _week_points(db, league, player_ids, season, week)
-    levels = replacement_levels(db, league, season)
+    projected = _projection_points(db, season, rules, player_ids, sources=sources)
+    week_points = _week_points(db, league, player_ids, season, week, sources)
+    levels = replacement_levels(db, league, season, sources)
 
     values = {
         row.player_id: row.value
@@ -702,8 +860,7 @@ def evaluate_free_agents(
 
     rows: list[dict] = []
     for player in players:
-        projection = projections.get(player.id)
-        ros_points = league_points(projection, rules)
+        ros_points = projected.get(player.id, 0.0)
         replacement = levels.get(player.position or "", 0.0)
         player_week_points = week_points.get(player.id)
 
@@ -722,7 +879,7 @@ def evaluate_free_agents(
                 "position": player.position,
                 "nfl_team": player.nfl_team,
                 "injury_status": player.injury_status,
-                "has_projection": projection is not None,
+                "has_projection": player.id in projected,
                 "ros_points": round(ros_points, 2),
                 "ppg": round(ros_points / GAMES_PER_SEASON, 1),
                 "week_points": player_week_points,
@@ -785,7 +942,11 @@ def _my_player_rows(
 
 
 def team_lineup(
-    db: Session, league: League, team_id: int, season: int | None = None
+    db: Session,
+    league: League,
+    team_id: int,
+    season: int | None = None,
+    sources: Sequence[str] | None = None,
 ) -> dict:
     """One team's starting lineup, seat by seat, plus its bench.
 
@@ -797,11 +958,12 @@ def team_lineup(
     (``source == "auto"``, which never leaves a seat empty while an eligible
     player is on the bench).
 
-    Works for any team in the league, not just mine.
+    Works for any team in the league, not just mine. ``sources`` selects which
+    projections the seats -- and the points shown in them -- are computed from.
     """
     season = season if season is not None else current_nfl_season()
-    week = current_projection_week(db, season)
-    roster = _team_roster(db, league, team_id, season, week)
+    week = current_projection_week(db, season, sources)
+    roster = _team_roster(db, league, team_id, season, week, sources)
 
     players = {
         player.id: player
@@ -886,6 +1048,7 @@ def evaluate_trade(
     side_a: Mapping[str, Any],
     side_b: Mapping[str, Any],
     season: int | None = None,
+    sources: Sequence[str] | None = None,
 ) -> dict:
     """Score a two-team trade.
 
@@ -893,6 +1056,9 @@ def evaluate_trade(
     players each side *sends away*. The verdict describes who comes out ahead,
     so "favors_a" means the players team A receives (side B's players) are
     worth more than the ones it sends.
+
+    ``sources`` selects the projections behind every points figure: the per
+    player ROS points, the side totals and both lineup deltas.
 
     Raises :class:`TradeValidationError` for anything unevaluable.
     """
@@ -929,13 +1095,17 @@ def evaluate_trade(
             )
 
     all_ids = roster_a | roster_b | set(out_a) | set(out_b)
-    points, positions = _points_and_positions(db, league, sorted(all_ids), season)
-    projections = _projections_for(db, season, sorted(all_ids))
-
     players = {
         player.id: player
         for player in db.query(Player).filter(Player.id.in_(sorted(all_ids))).all()
     }
+    # ``projected`` holds only the players some selected source actually
+    # covers; ``points`` zero-fills the rest so lineups can still be built.
+    projected = _projection_points(
+        db, season, rules, sorted(all_ids), sources=sources
+    )
+    points = {pid: projected.get(pid, 0.0) for pid in all_ids}
+    positions = {pid: player.position for pid, player in players.items()}
     values: dict[str, dict[int, float]] = {"redraft": {}, "dynasty": {}}
     for row in (
         db.query(TradeValue)
@@ -961,7 +1131,7 @@ def evaluate_trade(
             player = players.get(pid)
             name = player.full_name if player else f"player {pid}"
             ros = points.get(pid, 0.0)
-            if projections.get(pid) is None:
+            if pid not in projected:
                 missing_projection.append(name)
             if pid not in values["redraft"]:
                 missing_value.append(name)

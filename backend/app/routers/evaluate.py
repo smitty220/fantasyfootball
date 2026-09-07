@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -12,6 +14,14 @@ from app.services import evaluator
 from app.services.yahoo.sync import current_nfl_season
 
 router = APIRouter(prefix="/api/leagues", tags=["evaluate"])
+
+#: Projection-source metadata lives outside the per-league tree.
+projections_router = APIRouter(prefix="/api/projections", tags=["evaluate"])
+
+SOURCES_DESCRIPTION = (
+    "Comma-separated projection sources to use (e.g. \"fantasypros,espn\"). "
+    "Several sources are averaged; omit for the default best-source pick."
+)
 
 
 # --- schemas ---------------------------------------------------------------
@@ -89,6 +99,8 @@ class TradeSideIn(BaseModel):
 class TradeRequest(BaseModel):
     side_a: TradeSideIn
     side_b: TradeSideIn
+    #: Projection sources to average; omitted/empty means the best-source pick.
+    sources: list[str] | None = None
 
 
 class TradePlayerOut(BaseModel):
@@ -124,6 +136,19 @@ class TradeResponse(BaseModel):
     notes: list[str]
 
 
+class ProjectionSourceRow(BaseModel):
+    source: str
+    #: When this source's season-long rows were last fetched; null if it has none.
+    season_updated_at: datetime | None = None
+    #: Same for its rows describing the current projection week.
+    week_updated_at: datetime | None = None
+
+
+class ProjectionSourcesResponse(BaseModel):
+    week: int | None = None
+    sources: list[ProjectionSourceRow]
+
+
 # --- helpers ---------------------------------------------------------------
 
 
@@ -134,8 +159,20 @@ def _get_league(db: Session, league_key: str) -> League:
     return league
 
 
+def _sources(raw: str | None) -> tuple[str, ...] | None:
+    """Validated source selection, or a 400 naming the source we do not know."""
+    try:
+        return evaluator.validate_sources(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 def lineup_response(
-    db: Session, league: League, team_id: int, season: int | None = None
+    db: Session,
+    league: League,
+    team_id: int,
+    season: int | None = None,
+    sources: tuple[str, ...] | None = None,
 ) -> TeamLineupResponse:
     """The lineup payload for one team.
 
@@ -143,7 +180,11 @@ def lineup_response(
     exactly the shape the GET returns.
     """
     result = evaluator.team_lineup(
-        db, league, team_id, season=season if season is not None else current_nfl_season()
+        db,
+        league,
+        team_id,
+        season=season if season is not None else current_nfl_season(),
+        sources=sources,
     )
     return TeamLineupResponse(
         league_key=league.league_key,
@@ -176,13 +217,19 @@ def free_agent_rankings(
         description='Position to filter by; "FLEX" (or "W/R/T") means RB/WR/TE.',
     ),
     limit: int = Query(default=50, ge=1, le=500),
+    sources: str | None = Query(default=None, description=SOURCES_DESCRIPTION),
     db: Session = Depends(get_db),
 ) -> FreeAgentsResponse:
     league = _get_league(db, league_key)
     season = current_nfl_season()
 
     result = evaluator.evaluate_free_agents(
-        db, league, position=position, limit=limit, season=season
+        db,
+        league,
+        position=position,
+        limit=limit,
+        season=season,
+        sources=_sources(sources),
     )
     return FreeAgentsResponse(
         league_key=league.league_key,
@@ -200,12 +247,13 @@ def free_agent_rankings(
 def team_lineup(
     league_key: str,
     team_id: int,
+    sources: str | None = Query(default=None, description=SOURCES_DESCRIPTION),
     db: Session = Depends(get_db),
 ) -> TeamLineupResponse:
     """One team's starting lineup: the owner's if saved, else ROS-optimal."""
     league = _get_league(db, league_key)
     team = _get_team(db, league, team_id)
-    return lineup_response(db, league, team.id)
+    return lineup_response(db, league, team.id, sources=_sources(sources))
 
 
 @router.post("/{league_key}/evaluate/trade", response_model=TradeResponse)
@@ -215,6 +263,7 @@ def trade_analysis(
     db: Session = Depends(get_db),
 ) -> TradeResponse:
     league = _get_league(db, league_key)
+    sources = _sources(",".join(payload.sources) if payload.sources else None)
 
     try:
         result = evaluator.evaluate_trade(
@@ -223,8 +272,19 @@ def trade_analysis(
             payload.side_a.model_dump(),
             payload.side_b.model_dump(),
             season=current_nfl_season(),
+            sources=sources,
         )
     except evaluator.TradeValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return TradeResponse(**result)
+
+
+@projections_router.get("/sources", response_model=ProjectionSourcesResponse)
+def projection_sources(db: Session = Depends(get_db)) -> ProjectionSourcesResponse:
+    """Which projection sources are selectable, and how fresh each one is."""
+    result = evaluator.projection_sources(db, current_nfl_season())
+    return ProjectionSourcesResponse(
+        week=result["week"],
+        sources=[ProjectionSourceRow(**row) for row in result["sources"]],
+    )
