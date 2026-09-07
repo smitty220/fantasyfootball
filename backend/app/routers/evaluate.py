@@ -75,6 +75,8 @@ class LineupPlayer(BaseModel):
     injury_status: str | None = None
     percent_owned: float | None = None
     percent_started: float | None = None
+    #: Best same-position free agent's week points, when it beats this player's.
+    better_fa_week_points: float | None = None
 
 
 class LineupSlot(BaseModel):

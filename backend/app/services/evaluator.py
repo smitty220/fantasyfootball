@@ -785,6 +785,45 @@ def _free_agent_players(
     return query.all()
 
 
+def _free_agent_best_week_points(
+    db: Session,
+    league: League,
+    season: int,
+    week: int | None,
+    sources: Sequence[str] | None = None,
+) -> dict[str, float]:
+    """The best current-week points among the league's free agents, per position.
+
+    Same free-agent definition as :func:`_free_agent_players` (manual league:
+    fantasy-position players with no ``LeaguePlayer`` row at all; Yahoo:
+    ``status`` of ``FA``/``W``), the same ``sources`` blend and the same
+    ``week`` as the rest of the caller's response -- this is what
+    :func:`team_lineup` uses to flag a rostered player a free agent projects
+    to outscore.
+
+    One query for the pool's identities (:func:`_free_agent_players`) and one
+    for their weekly points (:func:`_week_points`, batched over every id), so
+    the cost stays two queries regardless of how deep the pool is -- never a
+    query per player. ``{}`` when there is no current week at all.
+    """
+    if week is None:
+        return {}
+    players = _free_agent_players(db, league, STARTABLE_POSITIONS)
+    if not players:
+        return {}
+    positions = {player.id: player.position for player in players}
+    week_points = _week_points(db, league, list(positions), season, week, sources)
+
+    best: dict[str, float] = {}
+    for player_id, points in week_points.items():
+        position = positions.get(player_id)
+        if position is None:
+            continue
+        if position not in best or points > best[position]:
+            best[position] = points
+    return best
+
+
 def evaluate_free_agents(
     db: Session,
     league: League,
@@ -964,6 +1003,7 @@ def team_lineup(
     season = season if season is not None else current_nfl_season()
     week = current_projection_week(db, season, sources)
     roster = _team_roster(db, league, team_id, season, week, sources)
+    fa_best_week = _free_agent_best_week_points(db, league, season, week, sources)
 
     players = {
         player.id: player
@@ -972,16 +1012,26 @@ def team_lineup(
 
     def row(pid: int) -> dict:
         player = players.get(pid)
+        position = player.position if player else None
+        own_week_points = roster.week_points.get(pid)
+        fa_week_points = fa_best_week.get(position) if position else None
+        better_fa_week_points = (
+            fa_week_points
+            if fa_week_points is not None
+            and (own_week_points is None or fa_week_points > own_week_points)
+            else None
+        )
         return {
             "player_id": pid,
             "full_name": player.full_name if player else f"player {pid}",
-            "position": player.position if player else None,
+            "position": position,
             "nfl_team": player.nfl_team if player else None,
-            "week_points": roster.week_points.get(pid),
+            "week_points": own_week_points,
             "ros_points": round(roster.ros_points.get(pid, 0.0), 2),
             "injury_status": player.injury_status if player else None,
             "percent_owned": player.percent_owned if player else None,
             "percent_started": player.percent_started if player else None,
+            "better_fa_week_points": better_fa_week_points,
         }
 
     queues: dict[str, list[int]] = {}

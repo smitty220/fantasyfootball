@@ -937,6 +937,7 @@ def test_team_lineup_fills_every_slot_and_benches_the_rest(
             "injury_status": None,
             "percent_owned": None,
             "percent_started": None,
+            "better_fa_week_points": None,
         },
     }
     assert "slot" not in lineup["bench"][0]
@@ -977,6 +978,187 @@ def test_team_lineup_of_an_empty_roster_is_all_empty_slots(
         "QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "K", "DEF"
     ]
     assert lineup["bench"] == []
+
+
+# --- team_lineup: better_fa_week_points -------------------------------------
+
+
+@pytest.fixture()
+def fa_flag_league(db_session):
+    """A manual league with starters to compare against a small FA pool.
+
+    My QB (20 week pts) beats the only FA QB (10); my RB (12) is beaten by an
+    FA RB (15); my WR has no week-1 projection of its own, and an FA WR does.
+    """
+    league = make_league(db_session, roster_slots=SMALL_SLOTS, num_teams=2)
+    mine = make_team(db_session, league, "My Squad", is_my_team=True)
+
+    my_qb = make_player(db_session, "My QB", "QB", 300)
+    my_rb = make_player(db_session, "My RB", "RB", 150)
+    my_wr = make_player(db_session, "My WR", "WR", 120)
+    roster(db_session, league, mine, my_qb, my_rb, my_wr)
+    set_week_points(db_session, my_qb, 20)
+    set_week_points(db_session, my_rb, 12)
+    # my_wr deliberately has no week-1 projection.
+
+    worse_fa_qb = make_player(db_session, "Worse FA QB", "QB", 250)
+    set_week_points(db_session, worse_fa_qb, 10)
+
+    better_fa_rb = make_player(db_session, "Better FA RB", "RB", 100)
+    set_week_points(db_session, better_fa_rb, 15)
+
+    projected_fa_wr = make_player(db_session, "Projected FA WR", "WR", 90)
+    set_week_points(db_session, projected_fa_wr, 8)
+
+    db_session.commit()
+    return league, mine
+
+
+def _lineup_by_position(lineup: dict) -> dict[str, dict]:
+    """Slot players keyed by position, for the (unique-per-position) fixtures above."""
+    return {
+        entry["player"]["position"]: entry["player"]
+        for entry in lineup["slots"]
+        if entry["player"] is not None
+    }
+
+
+def test_lineup_flags_a_starter_a_free_agent_projects_to_outscore(
+    fa_flag_league, db_session
+):
+    league, mine = fa_flag_league
+    lineup = evaluator.team_lineup(db_session, league, mine.id, season=SEASON)
+    by_position = _lineup_by_position(lineup)
+    assert by_position["RB"]["better_fa_week_points"] == 15.0
+
+
+def test_lineup_does_not_flag_when_the_free_agent_projects_worse(
+    fa_flag_league, db_session
+):
+    league, mine = fa_flag_league
+    lineup = evaluator.team_lineup(db_session, league, mine.id, season=SEASON)
+    by_position = _lineup_by_position(lineup)
+    assert by_position["QB"]["week_points"] == 20.0
+    assert by_position["QB"]["better_fa_week_points"] is None
+
+
+def test_lineup_flags_a_null_week_points_starter_against_any_projected_fa(
+    fa_flag_league, db_session
+):
+    league, mine = fa_flag_league
+    lineup = evaluator.team_lineup(db_session, league, mine.id, season=SEASON)
+    by_position = _lineup_by_position(lineup)
+    assert by_position["WR"]["week_points"] is None
+    assert by_position["WR"]["better_fa_week_points"] == 8.0
+
+
+def test_lineup_flag_is_null_without_a_current_week(fa_league, db_session):
+    """``fa_league`` has season-long projections only, so there is no week at all."""
+    league, _ = fa_league
+    mine = evaluator._my_team(db_session, league)
+    lineup = evaluator.team_lineup(db_session, league, mine.id, season=SEASON)
+
+    assert lineup["week"] is None
+    for entry in lineup["slots"]:
+        if entry["player"] is not None:
+            assert entry["player"]["better_fa_week_points"] is None
+    for entry in lineup["bench"]:
+        assert entry["better_fa_week_points"] is None
+
+
+@pytest.fixture()
+def bench_fa_league(db_session):
+    """A roster deep enough that one player is left on the bench, not FLEX."""
+    league = make_league(db_session, roster_slots=SMALL_SLOTS, num_teams=2)
+    mine = make_team(db_session, league, "My Squad", is_my_team=True)
+
+    qb1 = make_player(db_session, "QB1", "QB", 300)
+    rb1 = make_player(db_session, "RB1", "RB", 200)
+    rb2 = make_player(db_session, "RB2", "RB", 100)
+    rb3 = make_player(db_session, "RB3", "RB", 30)
+    wr1 = make_player(db_session, "WR1", "WR", 120)
+    roster(db_session, league, mine, qb1, rb1, rb2, rb3, wr1)
+    set_week_points(db_session, rb3, 5)
+
+    fa_rb = make_player(db_session, "Bench FA RB", "RB", 80)
+    set_week_points(db_session, fa_rb, 9)
+
+    db_session.commit()
+    return league, mine
+
+
+def test_lineup_flags_a_bench_player_too(bench_fa_league, db_session):
+    league, mine = bench_fa_league
+    lineup = evaluator.team_lineup(db_session, league, mine.id, season=SEASON)
+
+    assert [row["full_name"] for row in lineup["bench"]] == ["RB3"]
+    assert lineup["bench"][0]["week_points"] == 5.0
+    assert lineup["bench"][0]["better_fa_week_points"] == 9.0
+
+
+def test_lineup_manual_free_agent_definition_excludes_rostered_players(db_session):
+    league = make_league(db_session, roster_slots=SMALL_SLOTS, num_teams=2)
+    mine = make_team(db_session, league, "My Squad", is_my_team=True)
+    rival = make_team(db_session, league, "Rivals")
+
+    my_rb = make_player(db_session, "My RB", "RB", 150)
+    roster(db_session, league, mine, my_rb)
+    set_week_points(db_session, my_rb, 10)
+
+    rival_rb = make_player(db_session, "Rival RB", "RB", 140)
+    roster(db_session, league, rival, rival_rb)
+    set_week_points(db_session, rival_rb, 50)  # rostered elsewhere: not a free agent
+
+    free_rb = make_player(db_session, "Free RB", "RB", 120)
+    set_week_points(db_session, free_rb, 20)
+
+    db_session.commit()
+
+    lineup = evaluator.team_lineup(db_session, league, mine.id, season=SEASON)
+    rb = _lineup_by_position(lineup)["RB"]
+    assert rb["better_fa_week_points"] == 20.0
+
+
+def test_lineup_yahoo_free_agent_definition_uses_status_rows(db_session):
+    league = make_league(
+        db_session,
+        roster_slots=SMALL_SLOTS,
+        num_teams=2,
+        source="yahoo",
+        league_key="461.l.2",
+    )
+    mine = make_team(db_session, league, "My Squad", is_my_team=True)
+    other = make_team(db_session, league, "Other")
+
+    my_rb = make_player(db_session, "My RB", "RB", 150)
+    db_session.add(
+        LeaguePlayer(
+            league_id=league.id, player_id=my_rb.id, status="T", on_team_id=mine.id
+        )
+    )
+    set_week_points(db_session, my_rb, 10)
+
+    # Rostered on another team, and Yahoo doesn't call that a free agent even
+    # though it isn't mine -- must not count, despite outscoring everything.
+    other_rb = make_player(db_session, "Other RB", "RB", 140)
+    db_session.add(
+        LeaguePlayer(
+            league_id=league.id, player_id=other_rb.id, status="T", on_team_id=other.id
+        )
+    )
+    set_week_points(db_session, other_rb, 50)
+
+    waiver_rb = make_player(db_session, "Waiver RB", "RB", 120)
+    db_session.add(
+        LeaguePlayer(league_id=league.id, player_id=waiver_rb.id, status="W")
+    )
+    set_week_points(db_session, waiver_rb, 20)
+
+    db_session.commit()
+
+    lineup = evaluator.team_lineup(db_session, league, mine.id, season=SEASON)
+    rb = _lineup_by_position(lineup)["RB"]
+    assert rb["better_fa_week_points"] == 20.0
 
 
 # --- saved (manual) lineups ------------------------------------------------
