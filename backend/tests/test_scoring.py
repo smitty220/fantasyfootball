@@ -40,3 +40,21 @@ def test_league_rules_fallback():
     assert scoring.league_rules(None)["per_stat"]["rec"] == 0.5
     custom = {"scoring_rules": {"per_stat": {"rec": 2.0}}}
     assert scoring.league_rules(custom)["per_stat"]["rec"] == 2.0
+
+
+def test_tier_scoring_normalizes_per_game():
+    rules = scoring.get_preset("standard")
+    # 332 pts allowed over 17 games = 19.5/gm -> 14-20 tier (1 pt) x 17 games
+    season_line = {"dst_pts_allowed": 332}
+    assert scoring.score_stat_line(season_line, rules, games=17) == 17.0
+    # Same value read as a single game would land in the 35+ tier.
+    assert scoring.score_stat_line(season_line, rules, games=1) == -4
+
+
+def test_yds_allowed_tiers():
+    rules = {
+        "per_stat": {},
+        "dst_yds_allowed_tiers": [[99, 3], [299, 1], [399, -1], [None, -1]],
+    }
+    assert scoring.score_stat_line({"dst_yds_allowed": 327}, rules) == -1
+    assert scoring.score_stat_line({"dst_yds_allowed": 5568}, rules, games=17) == -17

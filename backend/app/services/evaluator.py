@@ -220,10 +220,15 @@ def _blend_points(
 def league_points(
     projection: Projection | None, rules: scoring.ScoringRules
 ) -> float:
-    """Fantasy points for a projection under one league's scoring rules."""
+    """Fantasy points for a projection under one league's scoring rules.
+
+    Season/ROS rows (``week IS NULL``) span the whole season, which matters
+    for per-game tier scoring (DST points/yards-allowed brackets).
+    """
     if projection is None or not projection.stat_json:
         return 0.0
-    return scoring.score_stat_line(projection.stat_json, rules)
+    games = scoring.GAMES_PER_SEASON if projection.week is None else 1
+    return scoring.score_stat_line(projection.stat_json, rules, games=games)
 
 
 def current_projection_week(

@@ -21,6 +21,9 @@ from typing import Any
 
 ScoringRules = dict[str, Any]
 
+#: Games a season-long stat line spans; used to per-game tier scoring.
+GAMES_PER_SEASON = 17
+
 # Typical Yahoo defaults; the manual-league UI offers these as editable presets.
 _STANDARD: ScoringRules = {
     "per_stat": {
@@ -93,20 +96,43 @@ def get_preset(name: str) -> ScoringRules:
     return copy.deepcopy(PRESETS[name])
 
 
-def score_stat_line(stat_json: dict[str, float], rules: ScoringRules) -> float:
-    """Points for one canonical stat line under one league's rules."""
+#: Tier-scored stats: (stat key in stat_json, rules key holding its tiers).
+#: Tiers are per-GAME brackets, so multi-game stat lines are averaged first.
+_TIER_STATS: tuple[tuple[str, str], ...] = (
+    ("dst_pts_allowed", "dst_pts_allowed_tiers"),
+    ("dst_yds_allowed", "dst_yds_allowed_tiers"),
+)
+
+
+def _tier_points(value: float, tiers: list) -> float:
+    for max_allowed, tier_points in tiers:
+        if max_allowed is None or value <= max_allowed:
+            return float(tier_points)
+    return 0.0
+
+
+def score_stat_line(
+    stat_json: dict[str, float], rules: ScoringRules, games: float = 1
+) -> float:
+    """Points for one canonical stat line under one league's rules.
+
+    ``games`` says how many games the stat line spans (1 for a weekly line,
+    ~17 for a season/rest-of-season line). Linear per-stat scoring is
+    unaffected by it, but tier stats (points/yards allowed brackets) are
+    per-game rules: the value is averaged per game, bracketed, and the tier
+    points awarded once per game.
+    """
     per_stat: dict[str, float] = rules.get("per_stat", {})
     points = 0.0
     for stat, value in stat_json.items():
         points += per_stat.get(stat, 0.0) * value
 
-    tiers = rules.get("dst_pts_allowed_tiers")
-    if tiers and "dst_pts_allowed" in stat_json:
-        allowed = stat_json["dst_pts_allowed"]
-        for max_allowed, tier_points in tiers:
-            if max_allowed is None or allowed <= max_allowed:
-                points += tier_points
-                break
+    games = max(float(games), 1.0)
+    for stat_key, tiers_key in _TIER_STATS:
+        tiers = rules.get(tiers_key)
+        if tiers and stat_key in stat_json:
+            per_game = stat_json[stat_key] / games
+            points += _tier_points(per_game, tiers) * games
 
     return round(points, 2)
 
