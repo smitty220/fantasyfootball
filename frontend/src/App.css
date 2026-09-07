@@ -1094,6 +1094,56 @@ a.tab {
   gap: 4px;
 }
 
+/* Source picker */
+.source-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.source-picker-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.source-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--code-bg);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.source-chip input {
+  margin: 0;
+}
+
+.source-chip-checked {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.source-chip-name {
+  white-space: nowrap;
+}
+
+.source-chip-freshness {
+  font-size: 11px;
+  opacity: 0.75;
+  white-space: nowrap;
+}
+
 /* Data page */
 .data-source-list {
   display: flex;

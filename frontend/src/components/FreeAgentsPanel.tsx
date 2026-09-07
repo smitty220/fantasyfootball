@@ -4,6 +4,7 @@ import type { FreeAgentEvalRow, MyPlayerEvalRow } from '../api/types'
 import { ApiError } from '../api/client'
 import { Badge, EmptyState, Spinner } from './ui'
 import { useToast } from './toastContext'
+import { SourcePicker } from './SourcePicker'
 
 const POSITION_OPTIONS: { value: string; label: string }[] = [
   { value: '', label: 'All' },
@@ -53,12 +54,13 @@ export function FreeAgentsPanel({ leagueKey }: { leagueKey: string }) {
   const [loading, setLoading] = useState(false)
   const [sortKey, setSortKey] = useState<SortKey>('vor')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+  const [sources, setSources] = useState<string[]>([])
   const { showError } = useToast()
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
-    getFreeAgentsEval(leagueKey, position || undefined, limit)
+    getFreeAgentsEval(leagueKey, position || undefined, limit, sources)
       .then((data) => {
         if (!cancelled) {
           setRows(data.rows)
@@ -81,7 +83,7 @@ export function FreeAgentsPanel({ leagueKey }: { leagueKey: string }) {
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [leagueKey, position, limit])
+  }, [leagueKey, position, limit, sources])
 
   const sorted = useMemo(() => {
     if (!rows) return null
@@ -129,6 +131,7 @@ export function FreeAgentsPanel({ leagueKey }: { leagueKey: string }) {
 
   return (
     <div className="free-agents">
+      <SourcePicker onChange={setSources} />
       <div className="field-row">
         <label className="field">
           <span className="field-label">Position</span>

@@ -12,6 +12,7 @@ import type {
   LeagueDetail,
   LineupAssignment,
   PlayerSearchResult,
+  ProjectionSourcesResponse,
   RosterPlayer,
   Team,
   TeamLineupResponse,
@@ -86,15 +87,26 @@ export function getFreeAgentsEval(
   leagueKey: string,
   position?: string,
   limit = 50,
+  sources?: string[],
 ): Promise<FreeAgentsEvalResponse> {
   return apiGet(
-    `/api/leagues/${encodeURIComponent(leagueKey)}/evaluate/free-agents${buildQuery({ position, limit })}`,
+    `/api/leagues/${encodeURIComponent(leagueKey)}/evaluate/free-agents${buildQuery({
+      position,
+      limit,
+      sources: sources && sources.length > 0 ? sources.join(',') : undefined,
+    })}`,
   )
 }
 
-export function getTeamLineup(leagueKey: string, teamId: number): Promise<TeamLineupResponse> {
+export function getTeamLineup(
+  leagueKey: string,
+  teamId: number,
+  sources?: string[],
+): Promise<TeamLineupResponse> {
   return apiGet(
-    `/api/leagues/${encodeURIComponent(leagueKey)}/evaluate/teams/${teamId}/lineup`,
+    `/api/leagues/${encodeURIComponent(leagueKey)}/evaluate/teams/${teamId}/lineup${buildQuery({
+      sources: sources && sources.length > 0 ? sources.join(',') : undefined,
+    })}`,
   )
 }
 
@@ -116,4 +128,8 @@ export function refreshDataSource(source: DataSourceId): Promise<DataRefreshResu
 
 export function getDataStatus(): Promise<DataStatusRow[]> {
   return apiGet('/api/data/status')
+}
+
+export function getProjectionSources(): Promise<ProjectionSourcesResponse> {
+  return apiGet('/api/projections/sources')
 }

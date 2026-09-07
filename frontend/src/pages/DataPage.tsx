@@ -36,6 +36,16 @@ const SOURCES: { id: DataSourceId; name: string; description: string }[] = [
     name: 'ESPN weekly projections',
     description: 'Current-week player projections from ESPN.',
   },
+  {
+    id: 'fantasypros_projections',
+    name: 'FantasyPros projections',
+    description: 'Full-season expert-consensus projections (requires API key).',
+  },
+  {
+    id: 'fantasypros_week_projections',
+    name: 'FantasyPros weekly projections',
+    description: 'Current-week expert-consensus projections (requires API key).',
+  },
 ]
 
 function toneForStatus(status: string | undefined): 'neutral' | 'success' | 'warning' | 'accent' {

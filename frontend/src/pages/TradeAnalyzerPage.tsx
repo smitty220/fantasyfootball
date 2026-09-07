@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { evaluateTrade, getRoster, getTeams } from '../api/endpoints'
 import type { RosterPlayer, Team, TradeEvaluateResponse, TradeSideResult } from '../api/types'
 import { ApiError } from '../api/client'
 import { Badge, Button, Card, EmptyState, InlineError, Spinner } from '../components/ui'
 import { useToast } from '../components/toastContext'
+import { SourcePicker } from '../components/SourcePicker'
 
 function formatNum(n: number | null | undefined): string {
   if (n === null || n === undefined) return '—'
@@ -146,6 +147,17 @@ export function TradeAnalyzerPage() {
   const [evaluating, setEvaluating] = useState(false)
   const [result, setResult] = useState<TradeEvaluateResponse | null>(null)
   const [evalError, setEvalError] = useState<string | null>(null)
+  const [sources, setSources] = useState<string[]>([])
+  const sourcesInitialized = useRef(false)
+
+  function handleSourcesChange(next: string[]) {
+    setSources(next)
+    if (sourcesInitialized.current) {
+      setResult(null)
+      setEvalError(null)
+    }
+    sourcesInitialized.current = true
+  }
 
   useEffect(() => {
     getTeams(leagueKey)
@@ -253,6 +265,7 @@ export function TradeAnalyzerPage() {
       const res = await evaluateTrade(leagueKey, {
         side_a: { team_id: teamAId, player_ids: Array.from(selectedA).map((id) => Number(id)) },
         side_b: { team_id: teamBId, player_ids: Array.from(selectedB).map((id) => Number(id)) },
+        sources: sources.length > 0 ? sources : undefined,
       })
       setResult(res)
     } catch (err) {
@@ -289,6 +302,8 @@ export function TradeAnalyzerPage() {
           <Button>Back to league</Button>
         </Link>
       </div>
+
+      <SourcePicker onChange={handleSourcesChange} />
 
       <div className="trade-grid">
         <TeamSidePicker

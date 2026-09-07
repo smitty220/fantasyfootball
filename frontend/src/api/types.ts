@@ -169,6 +169,7 @@ export interface TradeSidePayload {
 export interface TradeEvaluatePayload {
   side_a: TradeSidePayload
   side_b: TradeSidePayload
+  sources?: string[]
 }
 
 export interface TradePlayerResult {
@@ -211,6 +212,21 @@ export type DataSourceId =
   | 'fantasycalc'
   | 'espn_projections'
   | 'espn_week_projections'
+  | 'fantasypros_projections'
+  | 'fantasypros_week_projections'
+
+export type ProjectionSourceId = 'fantasypros' | 'espn'
+
+export interface ProjectionSourceInfo {
+  source: ProjectionSourceId
+  season_updated_at: string | null
+  week_updated_at: string | null
+}
+
+export interface ProjectionSourcesResponse {
+  week: number | null
+  sources: ProjectionSourceInfo[]
+}
 
 export interface DataRefreshResult {
   resource: string

@@ -21,6 +21,7 @@ import { ApiError } from '../api/client'
 import { Badge, Button, EmptyState, Spinner, TextField } from './ui'
 import { useToast } from './toastContext'
 import { useDebouncedValue } from '../useDebouncedValue'
+import { SourcePicker } from './SourcePicker'
 
 const POSITION_ORDER = ['QB', 'RB', 'WR', 'TE', 'FLEX', 'K', 'DEF', 'DST', 'BN', 'OTHER']
 const FLEX_ELIGIBLE = ['RB', 'WR', 'TE']
@@ -100,6 +101,7 @@ export function RosterEditor({
   const [autoSetting, setAutoSetting] = useState(false)
   const [dragSource, setDragSource] = useState<MoveSource | null>(null)
   const [selectedSource, setSelectedSource] = useState<MoveSource | null>(null)
+  const [sources, setSources] = useState<string[]>([])
   const debouncedQuery = useDebouncedValue(query, 300)
 
   function loadRoster() {
@@ -112,7 +114,7 @@ export function RosterEditor({
   }
 
   function loadLineup(): Promise<void> {
-    return getTeamLineup(leagueKey, teamId)
+    return getTeamLineup(leagueKey, teamId, sources)
       .then(setLineup)
       .catch(() => {
         // Non-fatal: fall back to a plain roster listing without slot badges.
@@ -129,6 +131,11 @@ export function RosterEditor({
     loadLineup()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [teamId, leagueKey])
+
+  useEffect(() => {
+    loadLineup()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sources])
 
   useEffect(() => {
     if (!editable) return
@@ -431,6 +438,8 @@ export function RosterEditor({
           ? 'Drag players into slots, or Auto-set for the projected-optimal lineup.'
           : 'Starters reflect the projected-optimal lineup.'}
       </p>
+
+      <SourcePicker onChange={setSources} />
 
       {roster === null && (
         <div className="loading-row">
