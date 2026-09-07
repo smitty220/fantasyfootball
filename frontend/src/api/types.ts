@@ -134,7 +134,6 @@ export interface FreeAgentsEvalResponse {
 }
 
 export interface LineupPlayer {
-  slot?: string
   player_id: string
   full_name: string
   position: string
@@ -143,10 +142,23 @@ export interface LineupPlayer {
   ros_points: number
 }
 
+export interface LineupSlotEntry {
+  slot: string
+  player: LineupPlayer | null
+}
+
+export type LineupSource = 'manual' | 'auto'
+
 export interface TeamLineupResponse {
   week: number | null
-  starters: LineupPlayer[]
+  source: LineupSource
+  slots: LineupSlotEntry[]
   bench: LineupPlayer[]
+}
+
+export interface LineupAssignment {
+  player_id: number
+  slot: string
 }
 
 export interface TradeSidePayload {

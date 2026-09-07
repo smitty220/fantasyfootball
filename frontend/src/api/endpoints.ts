@@ -10,6 +10,7 @@ import type {
   HealthResponse,
   League,
   LeagueDetail,
+  LineupAssignment,
   PlayerSearchResult,
   RosterPlayer,
   Team,
@@ -95,6 +96,14 @@ export function getTeamLineup(leagueKey: string, teamId: number): Promise<TeamLi
   return apiGet(
     `/api/leagues/${encodeURIComponent(leagueKey)}/evaluate/teams/${teamId}/lineup`,
   )
+}
+
+export function putLineup(teamId: number, assignments: LineupAssignment[]): Promise<TeamLineupResponse> {
+  return apiPut(`/api/manual/teams/${teamId}/lineup`, { assignments })
+}
+
+export function clearLineup(teamId: number): Promise<void> {
+  return apiDelete(`/api/manual/teams/${teamId}/lineup`)
 }
 
 export function evaluateTrade(leagueKey: string, payload: TradeEvaluatePayload): Promise<TradeEvaluateResponse> {

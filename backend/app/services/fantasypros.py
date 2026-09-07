@@ -258,7 +258,9 @@ def refresh_projections(db: Session, season: int, week: int | None = None) -> di
             "FANTASYPROS_API_KEY is not set; cannot refresh FantasyPros projections."
         )
 
-    resource = "fantasypros_projections"
+    resource = (
+        "fantasypros_projections" if week is None else "fantasypros_week_projections"
+    )
     with _sync_log(db, resource) as log:
         fetched_at = _utcnow()
         matched_by_id = 0
@@ -281,12 +283,16 @@ def refresh_projections(db: Session, season: int, week: int | None = None) -> di
                     full_name = entry.get("name")
                     entry_position = entry.get("position_id") or position
 
-                    stats_list = entry.get("stats") or []
-                    if not stats_list:
+                    # Live API (verified 2026-09-06): "stats" is a dict of
+                    # stat name -> value, not a list.
+                    stats = entry.get("stats") or {}
+                    if isinstance(stats, list):  # tolerate the shape we mocked
+                        stats = stats[0] if stats else {}
+                    if not stats:
                         no_projection += 1
                         continue
 
-                    stat_json = translate_stat_line(entry_position, stats_list[0])
+                    stat_json = translate_stat_line(entry_position, stats)
                     if not stat_json:
                         no_projection += 1
                         continue
@@ -322,3 +328,19 @@ def refresh_projections(db: Session, season: int, week: int | None = None) -> di
             "no_projection": no_projection,
             "per_position": per_position,
         }
+
+
+def refresh_season_projections(db: Session) -> dict:
+    """Registry-friendly wrapper: full-season projections, current season."""
+    from app.services.yahoo.sync import current_nfl_season
+
+    return refresh_projections(db, current_nfl_season(), week=None)
+
+
+def refresh_week_projections(db: Session) -> dict:
+    """Registry-friendly wrapper: current-week projections (week from ESPN)."""
+    from app.services.espn import current_week
+    from app.services.yahoo.sync import current_nfl_season
+
+    season = current_nfl_season()
+    return refresh_projections(db, season, week=current_week(season))

@@ -809,6 +809,179 @@ a.tab {
   margin: 0 0 4px;
 }
 
+/* Lineup editor */
+.lineup-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.lineup-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.lineup-slots {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+@media (max-width: 480px) {
+  .lineup-slots {
+    grid-template-columns: 1fr;
+  }
+}
+
+.lineup-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--surface);
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.lineup-slot[role='button'] {
+  cursor: pointer;
+}
+
+.lineup-slot-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.lineup-slot-empty {
+  font-size: 12px;
+  color: var(--text);
+  padding: 10px 4px;
+  text-align: center;
+}
+
+.lineup-slot-eligible {
+  border-style: solid;
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+}
+
+.lineup-slot-ineligible {
+  opacity: 0.45;
+  border-color: var(--danger);
+}
+
+.lineup-slot-active {
+  border-style: solid;
+  border-color: var(--accent);
+}
+
+.lineup-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 8px;
+  background: var(--bg);
+  cursor: grab;
+}
+
+.lineup-card-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-bg);
+}
+
+.lineup-card-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.lineup-card-name {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-h);
+}
+
+.lineup-card-meta {
+  font-size: 12px;
+  color: var(--text);
+}
+
+.lineup-card-points {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.lineup-card-stat {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.lineup-card-stat-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text);
+  opacity: 0.7;
+}
+
+.lineup-card-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.lineup-bench-section {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.lineup-bench-title {
+  cursor: default;
+}
+
+.lineup-bench-title-target {
+  cursor: pointer;
+  color: var(--accent);
+}
+
+.lineup-bench {
+  list-style: none;
+  margin: 0;
+  padding: 8px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
+  border: 1px dashed transparent;
+  border-radius: 8px;
+  min-height: 48px;
+}
+
+@media (max-width: 480px) {
+  .lineup-bench {
+    grid-template-columns: 1fr;
+  }
+}
+
+.lineup-bench-item[role='button'] {
+  cursor: pointer;
+}
+
+.lineup-bench-empty {
+  font-size: 13px;
+  color: var(--text);
+  padding: 8px 4px;
+}
+
 /* Trade analyzer */
 .trade-grid {
   display: grid;
