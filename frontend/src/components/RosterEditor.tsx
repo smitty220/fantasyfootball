@@ -24,7 +24,7 @@ import { useToast } from './toastContext'
 import { useDebouncedValue } from '../useDebouncedValue'
 import { SourcePicker } from './SourcePicker'
 
-const POSITION_ORDER = ['QB', 'RB', 'WR', 'TE', 'FLEX', 'K', 'DEF', 'DST', 'BN', 'OTHER']
+const POSITION_ORDER = ['QB', 'RB', 'WR', 'TE', 'FLEX', 'SUPERFLEX', 'K', 'DEF', 'DST', 'BN', 'OTHER']
 const FLEX_ELIGIBLE = ['RB', 'WR', 'TE']
 const DEF_ALIASES = ['DEF', 'DST']
 
@@ -63,16 +63,20 @@ function fmtPct(n: number | null | undefined): string {
 }
 
 function slotDisplayLabel(slot: string): string {
-  return slot === 'FLEX' ? 'W/R/T' : slot
+  if (slot === 'FLEX') return 'W/R/T'
+  if (slot === 'SUPERFLEX') return 'Q/W/R/T'
+  return slot
 }
 
 function slotEligibleHint(slot: string): string {
   if (slot === 'FLEX') return 'RB/WR/TE'
+  if (slot === 'SUPERFLEX') return 'QB/RB/WR/TE'
   return slot
 }
 
 function isEligibleForSlot(position: string, slot: string): boolean {
   if (slot === 'FLEX') return FLEX_ELIGIBLE.includes(position)
+  if (slot === 'SUPERFLEX') return position === 'QB' || FLEX_ELIGIBLE.includes(position)
   if (slot === 'DEF') return DEF_ALIASES.includes(position)
   return position === slot
 }

@@ -72,6 +72,13 @@ FLEX_POSITIONS: tuple[str, ...] = ("RB", "WR", "TE")
 #: How one FLEX slot's startable demand is split across the eligible positions.
 FLEX_WEIGHTS: dict[str, float] = {"RB": 0.4, "WR": 0.5, "TE": 0.1}
 
+#: Positions eligible for a SUPERFLEX (Q/W/R/T) slot.
+SUPERFLEX_POSITIONS: tuple[str, ...] = ("QB", "RB", "WR", "TE")
+
+#: SUPERFLEX demand split: in practice the slot is a second QB slot for
+#: almost every team, with occasional skill-position fill-ins.
+SUPERFLEX_WEIGHTS: dict[str, float] = {"QB": 0.75, "RB": 0.1, "WR": 0.1, "TE": 0.05}
+
 #: Roster slots that never start.
 BENCH_SLOTS: frozenset[str] = frozenset({"BN", "IR", "NA"})
 
@@ -83,6 +90,11 @@ _SLOT_ALIASES: dict[str, str] = {
     "WR/RB/TE": "FLEX",
     "WRT": "FLEX",
     "W/T": "FLEX",
+    "Q/W/R/T": "SUPERFLEX",
+    "QWRT": "SUPERFLEX",
+    "SUPER FLEX": "SUPERFLEX",
+    "SFLEX": "SUPERFLEX",
+    "OP": "SUPERFLEX",  # Yahoo's "offensive player" slot
     "DST": "DEF",
     "D/ST": "DEF",
     "PK": "K",
@@ -332,6 +344,8 @@ def position_filter(position: str | None) -> list[str] | None:
     label = normalize_slot(position)
     if label == "FLEX":
         return list(FLEX_POSITIONS)
+    if label == "SUPERFLEX":
+        return list(SUPERFLEX_POSITIONS)
     return [label]
 
 
@@ -353,6 +367,7 @@ def starter_slots(roster_slots: Mapping[str, int]) -> dict[str, float]:
     """
     demand: dict[str, float] = {}
     flex_count = 0
+    superflex_count = 0
 
     for raw_slot, count in roster_slots.items():
         slot = normalize_slot(raw_slot)
@@ -360,12 +375,17 @@ def starter_slots(roster_slots: Mapping[str, int]) -> dict[str, float]:
             continue
         if slot == "FLEX":
             flex_count += int(count)
+        elif slot == "SUPERFLEX":
+            superflex_count += int(count)
         elif slot in STARTABLE_POSITIONS:
             demand[slot] = demand.get(slot, 0.0) + float(count)
 
     if flex_count:
         for position, weight in FLEX_WEIGHTS.items():
             demand[position] = demand.get(position, 0.0) + weight * flex_count
+    if superflex_count:
+        for position, weight in SUPERFLEX_WEIGHTS.items():
+            demand[position] = demand.get(position, 0.0) + weight * superflex_count
 
     return {position: round(value, 4) for position, value in demand.items()}
 
@@ -436,7 +456,16 @@ def replacement_levels(
 
 
 #: Order starters are displayed in.
-STARTER_SLOT_ORDER: tuple[str, ...] = ("QB", "RB", "WR", "TE", "FLEX", "K", "DEF")
+STARTER_SLOT_ORDER: tuple[str, ...] = (
+    "QB",
+    "RB",
+    "WR",
+    "TE",
+    "FLEX",
+    "SUPERFLEX",
+    "K",
+    "DEF",
+)
 
 
 def _slot_rank(slot: str) -> int:
@@ -457,7 +486,7 @@ def starting_slot_counts(roster_slots: Mapping[str, int]) -> dict[str, int]:
         slot = normalize_slot(raw_slot)
         if slot in BENCH_SLOTS or not count:
             continue
-        if slot == "FLEX" or slot in STARTABLE_POSITIONS:
+        if slot in ("FLEX", "SUPERFLEX") or slot in STARTABLE_POSITIONS:
             counts[slot] = counts.get(slot, 0) + int(count)
     return counts
 
@@ -484,9 +513,10 @@ def _fill_lineup(
     """Greedy optimal lineup: (slot, player_id) pairs.
 
     Fixed position slots are filled first with the best remaining player at
-    that exact position, then FLEX slots take the best remaining RB/WR/TE.
-    Because fixed slots accept only one position, filling them greedily before
-    FLEX is optimal for this slot structure.
+    that exact position, then FLEX slots take the best remaining RB/WR/TE, then
+    SUPERFLEX slots the best remaining QB/RB/WR/TE. Because fixed slots accept
+    only one position and FLEX eligibility is a subset of SUPERFLEX
+    eligibility, filling narrower slots first stays optimal.
     """
     available = sorted(
         set(player_ids),
@@ -518,6 +548,12 @@ def _fill_lineup(
         if pid is None:
             break
         lineup.append(("FLEX", pid))
+
+    for _ in range(counts.get("SUPERFLEX", 0)):
+        pid = take(SUPERFLEX_POSITIONS)
+        if pid is None:
+            break
+        lineup.append(("SUPERFLEX", pid))
 
     return lineup
 

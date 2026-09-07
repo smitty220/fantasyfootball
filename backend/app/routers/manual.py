@@ -456,7 +456,12 @@ def _validated_assignments(
             )
 
         position = positions.get(player_id)
-        eligible = evaluator.FLEX_POSITIONS if slot == "FLEX" else (slot,)
+        if slot == "FLEX":
+            eligible: tuple[str, ...] = evaluator.FLEX_POSITIONS
+        elif slot == "SUPERFLEX":
+            eligible = evaluator.SUPERFLEX_POSITIONS
+        else:
+            eligible = (slot,)
         if position not in eligible:
             raise HTTPException(
                 status_code=400,

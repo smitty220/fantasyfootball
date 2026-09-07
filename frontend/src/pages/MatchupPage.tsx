@@ -12,7 +12,9 @@ function fmtPts(n: number | null | undefined): string {
 }
 
 function slotDisplayLabel(slot: string): string {
-  return slot === 'FLEX' ? 'W/R/T' : slot
+  if (slot === 'FLEX') return 'W/R/T'
+  if (slot === 'SUPERFLEX') return 'Q/W/R/T'
+  return slot
 }
 
 function slotValue(player: LineupPlayer | null): number | null {
