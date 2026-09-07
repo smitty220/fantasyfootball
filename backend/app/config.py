@@ -5,7 +5,9 @@ class Settings(BaseSettings):
     """Application settings, loaded from environment variables / .env."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # secrets.env is the visible-in-Finder name the owner edits; .env still
+        # works as a conventional fallback. Later files win on conflicts.
+        env_file=(".env", "secrets.env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
