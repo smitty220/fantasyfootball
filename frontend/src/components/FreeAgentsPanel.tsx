@@ -53,18 +53,26 @@ export function FreeAgentsPanel({
   initialPosition?: string
 }) {
   const [position, setPosition] = useState(initialPosition ?? '')
-
-  // Follow later deep-links (FA-upgrade chips) while already mounted.
-  useEffect(() => {
-    if (initialPosition !== undefined) setPosition(initialPosition)
-  }, [initialPosition])
   const [limit, setLimit] = useState(50)
   const [rows, setRows] = useState<FreeAgentEvalRow[] | null>(null)
   const [myPlayers, setMyPlayers] = useState<MyPlayerEvalRow[]>([])
   const [week, setWeek] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
-  const [sortKey, setSortKey] = useState<SortKey>('vor')
+  // Deep links from the FA-upgrade chips answer "who beats my starter this
+  // week?", so they land sorted by the weekly delta instead of VOR.
+  const [sortKey, setSortKey] = useState<SortKey>(
+    initialPosition !== undefined ? 'week_delta' : 'vor',
+  )
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+
+  // Follow later deep-links (FA-upgrade chips) while already mounted.
+  useEffect(() => {
+    if (initialPosition !== undefined) {
+      setPosition(initialPosition)
+      setSortKey('week_delta')
+      setSortDir('desc')
+    }
+  }, [initialPosition])
   const [sources, setSources] = useState<string[]>([])
   const { showError } = useToast()
 
