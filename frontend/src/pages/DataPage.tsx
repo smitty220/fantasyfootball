@@ -56,10 +56,10 @@ const REFRESH_INTERVAL_LABEL: Record<DataSourceId, string> = {
   sleeper_players: 'day',
   sleeper_trending: '6h',
   fantasycalc: 'day',
-  espn_projections: '12h',
-  espn_week_projections: '12h',
-  fantasypros_projections: '12h',
-  fantasypros_week_projections: '12h',
+  espn_projections: '6h',
+  espn_week_projections: '6h',
+  fantasypros_projections: '1h',
+  fantasypros_week_projections: '1h',
 }
 
 function formatCountdown(nextRunAt: string | null | undefined): string | null {

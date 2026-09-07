@@ -42,10 +42,10 @@ _JOB_SPECS: dict[str, Callable[[], object]] = {
     "sleeper_trending": lambda: IntervalTrigger(hours=6, start_date=_offset(minutes=5)),
     "sleeper_players": lambda: CronTrigger(hour=1, minute=0),
     "fantasycalc": lambda: CronTrigger(hour=1, minute=15),
-    "espn_projections": lambda: IntervalTrigger(hours=12, start_date=_offset(minutes=10)),
-    "espn_week_projections": lambda: IntervalTrigger(hours=12, start_date=_offset(minutes=20)),
-    "fantasypros_projections": lambda: IntervalTrigger(hours=12, start_date=_offset(minutes=30)),
-    "fantasypros_week_projections": lambda: IntervalTrigger(hours=12, start_date=_offset(minutes=40)),
+    "espn_projections": lambda: IntervalTrigger(hours=6, start_date=_offset(minutes=10)),
+    "espn_week_projections": lambda: IntervalTrigger(hours=6, start_date=_offset(minutes=20)),
+    "fantasypros_projections": lambda: IntervalTrigger(hours=1, start_date=_offset(minutes=30)),
+    "fantasypros_week_projections": lambda: IntervalTrigger(hours=1, start_date=_offset(minutes=40)),
     "crosswalk": lambda: CronTrigger(day_of_week="sun", hour=2, minute=0),
 }
 
