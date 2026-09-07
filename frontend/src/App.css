@@ -944,9 +944,9 @@ a.tab {
   line-height: 1.4;
   padding: 1px 6px;
   border-radius: 999px;
-  border: 1px solid var(--warning);
-  background: var(--warning-bg);
-  color: var(--warning);
+  border: 1px solid var(--danger);
+  background: var(--danger);
+  color: #fff;
   cursor: pointer;
   white-space: nowrap;
 }

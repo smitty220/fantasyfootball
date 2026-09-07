@@ -373,7 +373,7 @@ export function RosterEditor({
         onDragStart={(e) => e.stopPropagation()}
         onClick={(e) => handleFaFlagClick(e, player)}
       >
-        ▲ FA {value.toFixed(1)}
+        FA Available
       </button>
     )
   }

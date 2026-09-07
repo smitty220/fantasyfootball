@@ -20,7 +20,18 @@ export function LeagueDetailPage() {
   const [teams, setTeams] = useState<Team[] | null>(null)
   const [selectedTeamId, setSelectedTeamId] = useState<number | null>(null)
   const [tab, setTab] = useState<Tab>(() => (searchParams.get('tab') === 'free-agents' ? 'free-agents' : 'teams'))
-  const [initialFaPosition] = useState<string | undefined>(() => searchParams.get('position') || undefined)
+  const [initialFaPosition, setInitialFaPosition] = useState<string | undefined>(
+    () => searchParams.get('position') || undefined,
+  )
+
+  // The FA-upgrade chips navigate here with ?tab=&position= while this page is
+  // already mounted, so honor param changes after mount too.
+  useEffect(() => {
+    if (searchParams.get('tab') === 'free-agents') {
+      setTab('free-agents')
+      setInitialFaPosition(searchParams.get('position') || undefined)
+    }
+  }, [searchParams])
   const [editingTeamId, setEditingTeamId] = useState<number | null>(null)
   const [editName, setEditName] = useState('')
   const [showAddForm, setShowAddForm] = useState(false)

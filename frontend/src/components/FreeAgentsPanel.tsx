@@ -53,6 +53,11 @@ export function FreeAgentsPanel({
   initialPosition?: string
 }) {
   const [position, setPosition] = useState(initialPosition ?? '')
+
+  // Follow later deep-links (FA-upgrade chips) while already mounted.
+  useEffect(() => {
+    if (initialPosition !== undefined) setPosition(initialPosition)
+  }, [initialPosition])
   const [limit, setLimit] = useState(50)
   const [rows, setRows] = useState<FreeAgentEvalRow[] | null>(null)
   const [myPlayers, setMyPlayers] = useState<MyPlayerEvalRow[]>([])
