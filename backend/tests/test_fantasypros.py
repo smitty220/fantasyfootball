@@ -61,8 +61,8 @@ def _mock_all_positions(empty_positions: set[str] | None = None, **by_position):
 # --------------------------------------------------------------------------- #
 
 
-def test_refresh_projections_without_key_raises(db_session):
-    assert settings.FANTASYPROS_API_KEY == ""
+def test_refresh_projections_without_key_raises(db_session, monkeypatch):
+    monkeypatch.setattr(settings, "FANTASYPROS_API_KEY", "")
     with pytest.raises(fantasypros.FantasyProsNotConfiguredError):
         fantasypros.refresh_projections(db_session, SEASON)
 
