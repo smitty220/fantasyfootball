@@ -82,6 +82,7 @@ revisit against a real response once the key exists):
 from __future__ import annotations
 
 import logging
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Iterator
@@ -228,6 +229,15 @@ def _upsert_projection(
     db.flush()
 
 
+#: Pause between per-position requests; FantasyPros rate-limits per minute
+#: (observed live: bursts of 6+ quick requests draw 429s).
+REQUEST_PACING_SECONDS = 1.5
+
+#: 429 retries: honor Retry-After when present, else this fallback wait.
+RATE_LIMIT_RETRIES = 3
+RATE_LIMIT_FALLBACK_WAIT = 15.0
+
+
 def _fetch_position(
     client: httpx.Client, season: int, position: str, week: int | None
 ) -> list[dict]:
@@ -236,9 +246,23 @@ def _fetch_position(
     # than ros=true -- see module docstring.
     params["week"] = week if week is not None else 0
 
-    response = client.get(f"{BASE_URL}/nfl/{season}/projections", params=params)
-    response.raise_for_status()
-    return response.json().get("players") or []
+    for attempt in range(RATE_LIMIT_RETRIES + 1):
+        response = client.get(f"{BASE_URL}/nfl/{season}/projections", params=params)
+        if response.status_code == 429 and attempt < RATE_LIMIT_RETRIES:
+            retry_after = response.headers.get("Retry-After")
+            try:
+                wait = float(retry_after) if retry_after else RATE_LIMIT_FALLBACK_WAIT
+            except ValueError:
+                wait = RATE_LIMIT_FALLBACK_WAIT
+            wait = min(max(wait, 1.0), 60.0)
+            logger.info(
+                "FantasyPros rate limited (%s); retrying in %.0fs", position, wait
+            )
+            time.sleep(wait)
+            continue
+        response.raise_for_status()
+        return response.json().get("players") or []
+    raise RuntimeError("unreachable")  # pragma: no cover
 
 
 def refresh_projections(db: Session, season: int, week: int | None = None) -> dict:
@@ -273,7 +297,9 @@ def refresh_projections(db: Session, season: int, week: int | None = None) -> di
         with httpx.Client(
             timeout=15.0, headers={"x-api-key": settings.FANTASYPROS_API_KEY}
         ) as client:
-            for position in POSITIONS:
+            for index, position in enumerate(POSITIONS):
+                if index:
+                    time.sleep(REQUEST_PACING_SECONDS)
                 players = _fetch_position(client, season, position, week)
                 per_position[position] = len(players)
 

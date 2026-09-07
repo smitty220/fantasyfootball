@@ -13,6 +13,13 @@ from app.services import fantasypros
 SEASON = 2026
 
 
+@pytest.fixture(autouse=True)
+def _no_pacing(monkeypatch):
+    """Zero the polite request pacing/backoff so mocked tests stay fast."""
+    monkeypatch.setattr(fantasypros, "REQUEST_PACING_SECONDS", 0)
+    monkeypatch.setattr(fantasypros, "RATE_LIMIT_FALLBACK_WAIT", 0)
+
+
 @pytest.fixture()
 def fp_key(monkeypatch):
     monkeypatch.setattr(settings, "FANTASYPROS_API_KEY", "test-key")
