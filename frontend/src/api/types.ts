@@ -1,5 +1,17 @@
 // Shared API types, matching the backend contract in frontend/README (see task spec).
 
+/** null while the gate is on and nobody is signed in. */
+export type SessionRole = 'owner' | 'viewer'
+
+export interface SessionMe {
+  auth_enabled: boolean
+  role: SessionRole | null
+}
+
+export interface SessionLoginResponse {
+  role: SessionRole
+}
+
 export type LeagueSource = 'manual' | 'yahoo'
 export type ScoringPreset = 'standard' | 'half_ppr' | 'full_ppr'
 

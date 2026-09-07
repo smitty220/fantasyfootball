@@ -5,8 +5,10 @@ import type { League } from '../api/types'
 import { ApiError } from '../api/client'
 import { Badge, Banner, Button, Card, EmptyState, Spinner } from '../components/ui'
 import { useToast } from '../components/toastContext'
+import { useSession } from '../components/sessionContext'
 
 export function LeaguesPage() {
+  const { canEdit } = useSession()
   const [leagues, setLeagues] = useState<League[] | null>(null)
   const [yahooConnected, setYahooConnected] = useState<boolean | null>(null)
   const [bannerDismissed, setBannerDismissed] = useState(false)
@@ -41,12 +43,15 @@ export function LeaguesPage() {
     <div className="page">
       <div className="page-header">
         <h1>Leagues</h1>
-        <Link to="/leagues/new">
-          <Button variant="primary">New league (manual)</Button>
-        </Link>
+        {canEdit && (
+          <Link to="/leagues/new">
+            <Button variant="primary">New league (manual)</Button>
+          </Link>
+        )}
       </div>
 
-      {yahooConnected === false && !bannerDismissed && (
+      {/* Only the owner can do anything about a missing Yahoo connection. */}
+      {canEdit && yahooConnected === false && !bannerDismissed && (
         <Banner onDismiss={() => setBannerDismissed(true)}>
           Yahoo not connected — manual leagues only for now.
         </Banner>
@@ -60,7 +65,7 @@ export function LeaguesPage() {
 
       {leagues !== null && leagues.length === 0 && (
         <EmptyState>
-          No leagues yet. Create a manual league to get started.
+          {canEdit ? 'No leagues yet. Create a manual league to get started.' : 'No leagues yet.'}
         </EmptyState>
       )}
 

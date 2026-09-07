@@ -1,6 +1,11 @@
 // Small fetch wrapper used by every API call. No client-side timeout is set,
 // because some endpoints (data refresh) can legitimately take up to ~2 minutes.
 
+/** Fired when the API rejects a call for want of a session; App listens and
+ *  swaps in the login screen. Not fired for /api/session/* itself, where a 401
+ *  just means "wrong password" on a screen already showing the form. */
+export const UNAUTHENTICATED_EVENT = 'ghq:unauthenticated'
+
 export class ApiError extends Error {
   status: number
 
@@ -26,6 +31,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (!res.ok) {
+    if (res.status === 401 && !path.startsWith('/api/session')) {
+      window.dispatchEvent(new Event(UNAUTHENTICATED_EVENT))
+    }
+
     let message = `Request failed (${res.status})`
     try {
       const data: unknown = await res.json()

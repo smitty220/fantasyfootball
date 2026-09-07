@@ -5,6 +5,7 @@ import { ApiError } from '../api/client'
 import { parseApiDate } from '../api/dates'
 import { Badge, Button, Card } from '../components/ui'
 import { useToast } from '../components/toastContext'
+import { useSession } from '../components/sessionContext'
 
 const SOURCES: { id: DataSourceId; name: string; description: string }[] = [
   {
@@ -97,6 +98,7 @@ export function DataPage() {
   const [running, setRunning] = useState<Record<string, boolean>>({})
   const [resultMessage, setResultMessage] = useState<Record<string, string>>({})
   const { showError, showSuccess } = useToast()
+  const { canEdit } = useSession()
 
   function loadStatus() {
     getDataStatus()
@@ -150,8 +152,9 @@ export function DataPage() {
         <h1>Data sources</h1>
       </div>
       <p className="field-hint">
-        Recommended refresh order: crosswalk → Sleeper players → FantasyCalc. Refreshes can take up to a couple of
-        minutes.
+        {canEdit
+          ? 'Recommended refresh order: crosswalk → Sleeper players → FantasyCalc. Refreshes can take up to a couple of minutes.'
+          : 'How fresh each data source is. Only the league owner can trigger a refresh.'}
       </p>
 
       <div className="data-source-list">
@@ -172,9 +175,11 @@ export function DataPage() {
                   <h2>{source.name}</h2>
                   <p className="field-hint">{source.description}</p>
                 </div>
-                <Button variant="primary" busy={isRunning} onClick={() => handleRefresh(source.id)}>
-                  Refresh
-                </Button>
+                {canEdit && (
+                  <Button variant="primary" busy={isRunning} onClick={() => handleRefresh(source.id)}>
+                    Refresh
+                  </Button>
+                )}
               </div>
               <div className="data-source-meta">
                 <Badge tone={toneForStatus(status?.status)}>{status?.status || 'unknown'}</Badge>

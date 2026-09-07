@@ -6,6 +6,7 @@ import type { League, Team } from '../api/types'
 import { ApiError } from '../api/client'
 import { Badge, Button, Card, EmptyState, Spinner, TextField } from '../components/ui'
 import { useToast } from '../components/toastContext'
+import { useSession } from '../components/sessionContext'
 import { RosterEditor } from '../components/RosterEditor'
 import { FreeAgentsPanel } from '../components/FreeAgentsPanel'
 
@@ -15,6 +16,7 @@ export function LeagueDetailPage() {
   const { leagueKey = '' } = useParams<{ leagueKey: string }>()
   const [searchParams] = useSearchParams()
   const { showError, showSuccess } = useToast()
+  const { canEdit } = useSession()
 
   const [league, setLeague] = useState<League | null | undefined>(undefined)
   const [teams, setTeams] = useState<Team[] | null>(null)
@@ -62,7 +64,9 @@ export function LeagueDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leagueKey])
 
-  const isManual = league?.source === 'manual'
+  // Team/roster editing needs both a manual league and edit rights: a viewer
+  // sees exactly the read-only view a Yahoo league already gets.
+  const isManual = league?.source === 'manual' && canEdit
 
   async function handleAddTeam(e: FormEvent) {
     e.preventDefault()

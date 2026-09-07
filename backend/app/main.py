@@ -5,8 +5,18 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 import app.models  # noqa: F401  (register models with Base before migrating)
+from app.middleware import SessionAuthMiddleware
 from app.migrations import run_migrations
-from app.routers import auth, data, evaluate, health, leagues, manual, players
+from app.routers import (
+    app_auth,
+    auth,
+    data,
+    evaluate,
+    health,
+    leagues,
+    manual,
+    players,
+)
 
 FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
 
@@ -38,7 +48,11 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title="Gridiron HQ", version="0.1.0", lifespan=lifespan)
 
+    # A no-op while OWNER_PASSWORD is unset (the default).
+    app.add_middleware(SessionAuthMiddleware)
+
     app.include_router(health.router)
+    app.include_router(app_auth.router)
     app.include_router(auth.router)
     app.include_router(leagues.router)
     app.include_router(manual.router)

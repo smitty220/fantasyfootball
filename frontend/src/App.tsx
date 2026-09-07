@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { NavLink, Route, Routes } from 'react-router-dom'
+import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
 import './App.css'
 import { getHealth } from './api/endpoints'
 import { LeaguesPage } from './pages/LeaguesPage'
@@ -8,11 +8,14 @@ import { LeagueDetailPage } from './pages/LeagueDetailPage'
 import { TradeAnalyzerPage } from './pages/TradeAnalyzerPage'
 import { MatchupPage } from './pages/MatchupPage'
 import { DataPage } from './pages/DataPage'
+import { useSession } from './components/sessionContext'
+import { Badge } from './components/ui'
 
 type HealthState = 'checking' | 'ok' | 'error'
 
 function App() {
   const [health, setHealth] = useState<HealthState>('checking')
+  const { role, canEdit, logout } = useSession()
 
   useEffect(() => {
     getHealth()
@@ -33,13 +36,22 @@ function App() {
               Data
             </NavLink>
           </nav>
+          {role && (
+            <div className="app-session">
+              <Badge tone={role === 'owner' ? 'accent' : 'neutral'}>{role}</Badge>
+              <button type="button" className="nav-link app-logout" onClick={logout}>
+                Log out
+              </button>
+            </div>
+          )}
         </div>
       </header>
 
       <main className="app-main">
         <Routes>
           <Route path="/" element={<LeaguesPage />} />
-          <Route path="/leagues/new" element={<NewLeagueWizard />} />
+          {/* Nothing links here for a viewer; this catches a typed-in URL. */}
+          <Route path="/leagues/new" element={canEdit ? <NewLeagueWizard /> : <Navigate to="/" replace />} />
           <Route path="/leagues/:leagueKey" element={<LeagueDetailPage />} />
           <Route path="/leagues/:leagueKey/trade" element={<TradeAnalyzerPage />} />
           <Route path="/leagues/:leagueKey/matchup" element={<MatchupPage />} />

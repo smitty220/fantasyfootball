@@ -15,6 +15,8 @@ import type {
   PlayerSearchResult,
   ProjectionSourcesResponse,
   RosterPlayer,
+  SessionLoginResponse,
+  SessionMe,
   Team,
   TeamLineupResponse,
   TradeEvaluatePayload,
@@ -26,6 +28,18 @@ import type {
 
 export function getHealth(): Promise<HealthResponse> {
   return apiGet('/api/health')
+}
+
+export function getSession(): Promise<SessionMe> {
+  return apiGet('/api/session/me')
+}
+
+export function sessionLogin(password: string): Promise<SessionLoginResponse> {
+  return apiPost('/api/session/login', { password })
+}
+
+export function sessionLogout(): Promise<void> {
+  return apiPost('/api/session/logout')
 }
 
 export function getYahooStatus(): Promise<YahooStatus> {
