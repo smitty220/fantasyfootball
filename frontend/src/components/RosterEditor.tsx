@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { DragEvent, KeyboardEvent, ReactNode } from 'react'
+import type { DragEvent, KeyboardEvent } from 'react'
 import {
   addRosterPlayer,
   clearLineup,
@@ -49,8 +49,16 @@ function toRosterPlayer(lp: LineupPlayer): RosterPlayer {
     full_name: lp.full_name,
     position: lp.position,
     nfl_team: lp.nfl_team,
-    injury_status: null,
+    injury_status: lp.injury_status,
   }
+}
+
+function fmtPts(n: number | null | undefined): string {
+  return n == null ? '—' : n.toFixed(1)
+}
+
+function fmtPct(n: number | null | undefined): string {
+  return n == null ? '—' : `${n.toFixed(1)}%`
 }
 
 function slotDisplayLabel(slot: string): string {
@@ -327,48 +335,41 @@ export function RosterEditor({
     setSelectedSource(null)
   }
 
-  function renderCard(player: LineupPlayer, source: MoveSource, isSelected: boolean, actions?: ReactNode) {
-    return (
-      <div
-        className={`lineup-card${isSelected ? ' lineup-card-selected' : ''}`}
-        draggable={editable}
-        onDragStart={editable ? () => handleDragStart(source) : undefined}
-        onDragEnd={editable ? handleDragEnd : undefined}
-      >
-        <div className="lineup-card-main">
-          <span className="lineup-card-name">{player.full_name}</span>
-          <span className="lineup-card-meta">
-            {player.position} · {player.nfl_team || 'FA'}
-          </span>
-        </div>
-        <div className="lineup-card-points">
-          <span className="lineup-card-stat">
-            <span className="lineup-card-stat-label">Wk</span>
-            {player.week_points != null ? player.week_points.toFixed(1) : '—'}
-          </span>
-          <span className="lineup-card-stat">
-            <span className="lineup-card-stat-label">ROS</span>
-            {player.ros_points.toFixed(1)}
-          </span>
-        </div>
-        {actions && <div className="lineup-card-actions">{actions}</div>}
-      </div>
-    )
-  }
-
   function removeAction(player: LineupPlayer) {
     if (!editable) return undefined
     return (
       <Button
         variant="danger"
+        className="lineup-row-remove"
+        aria-label={`Remove ${player.full_name}`}
         onClick={(e) => {
           e.stopPropagation()
           handleRemove(toRosterPlayer(player))
         }}
         busy={removingId === player.player_id}
       >
-        Remove
+        ×
       </Button>
+    )
+  }
+
+  function renderPlayerCells(player: LineupPlayer) {
+    return (
+      <>
+        <span className="lineup-row-pos">{player.position}</span>
+        <span className="lineup-row-name">
+          {player.full_name}
+          {player.injury_status && (
+            <Badge tone="warning">{player.injury_status}</Badge>
+          )}
+        </span>
+        <span className="lineup-row-team">{player.nfl_team || 'FA'}</span>
+        <span className="lineup-row-stat">{fmtPts(player.week_points)}</span>
+        <span className="lineup-row-stat">{fmtPts(player.ros_points)}</span>
+        <span className="lineup-row-stat lineup-row-pct">{fmtPct(player.percent_owned)}</span>
+        <span className="lineup-row-stat lineup-row-pct">{fmtPct(player.percent_started)}</span>
+        <span className="lineup-row-actions">{removeAction(player)}</span>
+      </>
     )
   }
 
@@ -378,33 +379,34 @@ export function RosterEditor({
     let stateClass = ''
     if (editable && active) {
       stateClass = isOwnSource
-        ? ' lineup-slot-active'
+        ? ' lineup-row-active'
         : isEligibleForSlot(active.player.position, entry.slot)
-          ? ' lineup-slot-eligible'
-          : ' lineup-slot-ineligible'
+          ? ' lineup-row-eligible'
+          : ' lineup-row-ineligible'
     }
-    const isSelectedCard = !!(selectedSource && selectedSource.type === 'slot' && selectedSource.index === index)
+    const isSelected = !!(selectedSource && selectedSource.type === 'slot' && selectedSource.index === index)
+    const player = entry.player
     return (
       <div
         key={index}
-        className={`lineup-slot${stateClass}`}
+        className={`lineup-row${stateClass}${isSelected ? ' lineup-row-selected' : ''}${
+          player ? '' : ' lineup-row-empty'
+        }`}
         role={editable ? 'button' : undefined}
         tabIndex={editable ? 0 : undefined}
+        draggable={editable && !!player}
+        onDragStart={editable && player ? () => handleDragStart({ type: 'slot', index, player }) : undefined}
+        onDragEnd={editable && player ? handleDragEnd : undefined}
         onDragOver={editable ? (e) => handleSlotDragOver(e, index) : undefined}
         onDrop={editable ? (e) => handleSlotDrop(e, index) : undefined}
         onClick={editable ? () => handleSlotClick(index) : undefined}
         onKeyDown={editable ? (e) => handleKeyActivate(e, () => handleSlotClick(index)) : undefined}
       >
-        <div className="lineup-slot-label">{slotDisplayLabel(entry.slot)}</div>
-        {entry.player ? (
-          renderCard(
-            entry.player,
-            { type: 'slot', index, player: entry.player },
-            isSelectedCard,
-            removeAction(entry.player),
-          )
+        <span className="lineup-row-chip">{slotDisplayLabel(entry.slot)}</span>
+        {player ? (
+          renderPlayerCells(player)
         ) : (
-          <div className="lineup-slot-empty">Drop a {slotEligibleHint(entry.slot)} here</div>
+          <span className="lineup-row-empty-label">Drop a {slotEligibleHint(entry.slot)} here</span>
         )}
       </div>
     )
@@ -417,15 +419,20 @@ export function RosterEditor({
       selectedSource.player.player_id === player.player_id
     )
     return (
-      <li
-        key={player.player_id}
-        className="lineup-bench-item"
-        role={editable ? 'button' : undefined}
-        tabIndex={editable ? 0 : undefined}
-        onClick={editable ? () => handleBenchCardClick(player) : undefined}
-        onKeyDown={editable ? (e) => handleKeyActivate(e, () => handleBenchCardClick(player)) : undefined}
-      >
-        {renderCard(player, { type: 'bench', player }, isSelected, removeAction(player))}
+      <li key={player.player_id} className="lineup-bench-item">
+        <div
+          className={`lineup-row${isSelected ? ' lineup-row-selected' : ''}`}
+          role={editable ? 'button' : undefined}
+          tabIndex={editable ? 0 : undefined}
+          draggable={editable}
+          onDragStart={editable ? () => handleDragStart({ type: 'bench', player }) : undefined}
+          onDragEnd={editable ? handleDragEnd : undefined}
+          onClick={editable ? () => handleBenchCardClick(player) : undefined}
+          onKeyDown={editable ? (e) => handleKeyActivate(e, () => handleBenchCardClick(player)) : undefined}
+        >
+          <span className="lineup-row-chip lineup-row-chip-bench">BN</span>
+          {renderPlayerCells(player)}
+        </div>
       </li>
     )
   }
@@ -461,6 +468,18 @@ export function RosterEditor({
                 Auto-set lineup
               </Button>
             )}
+          </div>
+
+          <div className="lineup-columns-header" aria-hidden="true">
+            <span className="lineup-col" />
+            <span className="lineup-col">Pos</span>
+            <span className="lineup-col">Player</span>
+            <span className="lineup-col">Team</span>
+            <span className="lineup-col">Wk</span>
+            <span className="lineup-col">ROS</span>
+            <span className="lineup-col lineup-col-pct">%Own</span>
+            <span className="lineup-col lineup-col-pct">%Start</span>
+            <span className="lineup-col" />
           </div>
 
           <div className="lineup-slots">{lineup.slots.map((entry, index) => renderSlot(entry, index))}</div>

@@ -140,6 +140,9 @@ export interface LineupPlayer {
   nfl_team: string | null
   week_points: number | null
   ros_points: number
+  injury_status: InjuryStatus
+  percent_owned: number | null
+  percent_started: number | null
 }
 
 export interface LineupSlotEntry {
