@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { getDataSchedule, getDataStatus, refreshDataSource } from '../api/endpoints'
 import type { DataScheduleRow, DataSourceId, DataStatusRow } from '../api/types'
 import { ApiError } from '../api/client'
+import { parseApiDate } from '../api/dates'
 import { Badge, Button, Card } from '../components/ui'
 import { useToast } from '../components/toastContext'
 
@@ -63,10 +64,9 @@ const REFRESH_INTERVAL_LABEL: Record<DataSourceId, string> = {
 }
 
 function formatCountdown(nextRunAt: string | null | undefined): string | null {
-  if (!nextRunAt) return null
-  const target = new Date(nextRunAt).getTime()
-  if (Number.isNaN(target)) return null
-  const diffMs = target - Date.now()
+  const parsed = parseApiDate(nextRunAt)
+  if (!parsed) return null
+  const diffMs = parsed.getTime() - Date.now()
   if (diffMs <= 0) return 'due now'
   const totalMinutes = Math.round(diffMs / 60000)
   const days = Math.floor(totalMinutes / (60 * 24))
@@ -87,10 +87,8 @@ function toneForStatus(status: string | undefined): 'neutral' | 'success' | 'war
 }
 
 function formatTime(value: string | null | undefined): string {
-  if (!value) return '—'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return date.toLocaleString()
+  const date = parseApiDate(value)
+  return date ? date.toLocaleString() : '—'
 }
 
 export function DataPage() {

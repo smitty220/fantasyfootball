@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { parseApiDate } from '../api/dates'
 import { getProjectionSources } from '../api/endpoints'
 import type { ProjectionSourceId, ProjectionSourceInfo } from '../api/types'
 
@@ -14,9 +15,8 @@ function sourceLabel(id: string): string {
 }
 
 function relativeTime(iso: string | null): string {
-  if (!iso) return 'never'
-  const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return 'never'
+  const date = parseApiDate(iso)
+  if (!date) return 'never'
   const diffMs = Date.now() - date.getTime()
   const diffMin = diffMs / 60000
   if (diffMin < 60) return `${Math.max(0, Math.round(diffMin))}m ago`
@@ -29,7 +29,7 @@ function relativeTime(iso: string | null): string {
 function newerOf(a: string | null, b: string | null): string | null {
   if (!a) return b
   if (!b) return a
-  return new Date(a).getTime() >= new Date(b).getTime() ? a : b
+  return (parseApiDate(a)?.getTime() ?? 0) >= (parseApiDate(b)?.getTime() ?? 0) ? a : b
 }
 
 function loadStoredSelection(): string[] | null {
