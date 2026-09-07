@@ -4,12 +4,25 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     image: gridiron-hq:latest
+    container_name: gridiron-hq
     restart: unless-stopped
     ports:
       - "8000:8000"
-    env_file:
-      - .env
     environment:
       DATABASE_URL: sqlite:////app/data/app.db
+      # SCHEDULER_ENABLED: "true"  # set to "false" to disable background auto-refresh
     volumes:
       - ./data:/app/data
+      # Canonical secrets file: backend/secrets.env — the same file (same
+      # path, relative to the backend/ working directory) that `uv run`
+      # dev reads directly off disk. Bind-mounting it in at the identical
+      # relative location (container WORKDIR is /app/backend) means
+      # app.config.Settings picks it up with no compose `env_file:` entry
+      # and no second copy to keep in sync. See README.md / deploy/pi-setup.md.
+      - ./backend/secrets.env:/app/backend/secrets.env:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
