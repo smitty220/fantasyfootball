@@ -979,6 +979,9 @@ def team_lineup(
             "nfl_team": player.nfl_team if player else None,
             "week_points": roster.week_points.get(pid),
             "ros_points": round(roster.ros_points.get(pid, 0.0), 2),
+            "injury_status": player.injury_status if player else None,
+            "percent_owned": player.percent_owned if player else None,
+            "percent_started": player.percent_started if player else None,
         }
 
     queues: dict[str, list[int]] = {}

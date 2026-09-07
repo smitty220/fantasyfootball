@@ -72,6 +72,9 @@ class LineupPlayer(BaseModel):
     nfl_team: str | None = None
     week_points: float | None = None
     ros_points: float
+    injury_status: str | None = None
+    percent_owned: float | None = None
+    percent_started: float | None = None
 
 
 class LineupSlot(BaseModel):
