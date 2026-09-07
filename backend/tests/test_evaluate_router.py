@@ -182,7 +182,14 @@ def test_trade_endpoint_unknown_league_is_404(client, seeded):
 # --- lineup ----------------------------------------------------------------
 
 
-def test_lineup_endpoint_returns_starters_and_bench(client, seeded, db_session):
+def _seats(body: dict) -> list[tuple[str, str | None]]:
+    return [
+        (entry["slot"], entry["player"]["full_name"] if entry["player"] else None)
+        for entry in body["slots"]
+    ]
+
+
+def test_lineup_endpoint_returns_slots_and_bench(client, seeded, db_session):
     league, f = seeded
     bench_rb = make_player(db_session, "A Bench RB", "RB", 40)
     roster(db_session, league, f["team_a"], bench_rb)
@@ -196,13 +203,15 @@ def test_lineup_endpoint_returns_starters_and_bench(client, seeded, db_session):
     assert body["league_key"] == "manual.1"
     assert body["team_id"] == f["team_a"].id
     assert body["week"] == 1
-    assert [(row["slot"], row["full_name"]) for row in body["starters"]] == [
+    assert body["source"] == "auto"
+    assert _seats(body) == [
         ("QB", "A QB"),
         ("RB", "A Star RB"),
+        ("WR", None),
         ("FLEX", "A Bench RB"),
     ]
-    assert body["starters"][1]["week_points"] == 15.0
-    assert body["starters"][1]["ros_points"] == 200.0
+    assert body["slots"][1]["player"]["week_points"] == 15.0
+    assert body["slots"][1]["player"]["ros_points"] == 200.0
     assert body["bench"] == []
 
 
@@ -211,11 +220,37 @@ def test_lineup_endpoint_works_for_a_rival_team(client, seeded):
     body = client.get(
         f"/api/leagues/manual.1/evaluate/teams/{f['team_b'].id}/lineup"
     ).json()
-    assert [(row["slot"], row["full_name"]) for row in body["starters"]] == [
+    assert _seats(body) == [
         ("QB", "B QB"),
+        ("RB", None),
         ("WR", "B Star WR"),
+        ("FLEX", None),
     ]
     assert body["week"] is None
+
+
+def test_lineup_endpoint_reports_a_saved_lineup(client, seeded, db_session):
+    league, f = seeded
+    bench_rb = make_player(db_session, "A Bench RB", "RB", 40)
+    roster(db_session, league, f["team_a"], bench_rb)
+    db_session.commit()
+
+    client.put(
+        f"/api/manual/teams/{f['team_a'].id}/lineup",
+        json={"assignments": [{"player_id": bench_rb.id, "slot": "RB"}]},
+    )
+
+    body = client.get(
+        f"/api/leagues/manual.1/evaluate/teams/{f['team_a'].id}/lineup"
+    ).json()
+    assert body["source"] == "manual"
+    assert _seats(body) == [
+        ("QB", None),
+        ("RB", "A Bench RB"),
+        ("WR", None),
+        ("FLEX", None),
+    ]
+    assert [row["full_name"] for row in body["bench"]] == ["A QB", "A Star RB"]
 
 
 def test_lineup_endpoint_unknown_league_is_404(client, seeded):

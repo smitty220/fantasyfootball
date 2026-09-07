@@ -9,12 +9,13 @@ refuses (404/409) to touch anything synced from Yahoo.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.models import League, LeaguePlayer, Matchup, Player, RosterSlot, Team
-from app.services import scoring
+from app.routers.evaluate import TeamLineupResponse, lineup_response
+from app.services import evaluator, scoring
 
 router = APIRouter(prefix="/api/manual", tags=["manual"])
 
@@ -80,6 +81,16 @@ class RosterPlayerOut(BaseModel):
 
 class RosterAdd(BaseModel):
     player_id: int
+
+
+class LineupAssignment(BaseModel):
+    player_id: int
+    #: Slot name; aliases like "W/R/T" are accepted and stored as "FLEX".
+    slot: str
+
+
+class LineupSet(BaseModel):
+    assignments: list[LineupAssignment] = Field(default_factory=list)
 
 
 # --- helpers -------------------------------------------------------------
@@ -364,5 +375,141 @@ def remove_roster_player(
         )
 
     db.delete(league_player)
+    # A dropped player must not linger in the team's saved lineup.
+    db.query(RosterSlot).filter(
+        RosterSlot.team_id == team.id,
+        RosterSlot.week == evaluator.MANUAL_LINEUP_WEEK,
+        RosterSlot.player_id == player_id,
+    ).delete(synchronize_session=False)
+    db.commit()
+    return Response(status_code=204)
+
+
+# --- lineup endpoints ------------------------------------------------------
+
+
+def _validated_assignments(
+    db: Session, team: Team, league: League, assignments: list[LineupAssignment]
+) -> list[tuple[int, str]]:
+    """``(player_id, slot)`` pairs, or a 400 explaining why they are illegal.
+
+    Partial lineups are fine -- an owner may fill three slots and leave the
+    rest to be shown as empty seats -- but every assignment must name a player
+    on this team, a slot this league actually has, and a position that slot
+    accepts, with no slot over its capacity and no player used twice.
+    """
+    rostered = {
+        row.player_id
+        for row in db.query(LeaguePlayer.player_id).filter(
+            LeaguePlayer.league_id == league.id,
+            LeaguePlayer.on_team_id == team.id,
+        )
+    }
+    capacity = evaluator.starting_slot_counts(evaluator.league_roster_slots(league))
+    positions = {
+        player.id: player.position
+        for player in db.query(Player)
+        .filter(Player.id.in_([a.player_id for a in assignments]))
+        .all()
+    }
+
+    pairs: list[tuple[int, str]] = []
+    seen: set[int] = set()
+    used: dict[str, int] = {}
+
+    for assignment in assignments:
+        player_id = assignment.player_id
+        if player_id in seen:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Player {player_id} is assigned to more than one slot",
+            )
+        seen.add(player_id)
+
+        if player_id not in rostered:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Player {player_id} is not on {team.name}'s roster",
+            )
+
+        slot = evaluator.normalize_slot(assignment.slot)
+        if not capacity.get(slot):
+            available = ", ".join(
+                s for s in evaluator.STARTER_SLOT_ORDER if capacity.get(s)
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"{assignment.slot!r} is not a starting slot in this league; "
+                    f"available slots: {available or 'none'}"
+                ),
+            )
+
+        used[slot] = used.get(slot, 0) + 1
+        if used[slot] > capacity[slot]:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"This league has only {capacity[slot]} {slot} slot(s); "
+                    f"{used[slot]} players were assigned to {slot}"
+                ),
+            )
+
+        position = positions.get(player_id)
+        eligible = evaluator.FLEX_POSITIONS if slot == "FLEX" else (slot,)
+        if position not in eligible:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Player {player_id} ({position or 'unknown position'}) "
+                    f"cannot start in a {slot} slot"
+                ),
+            )
+
+        pairs.append((player_id, slot))
+
+    return pairs
+
+
+@router.put("/teams/{team_id}/lineup", response_model=TeamLineupResponse)
+def set_lineup(
+    team_id: int, payload: LineupSet, db: Session = Depends(get_db)
+) -> TeamLineupResponse:
+    """Save the owner's starting lineup, replacing any previously saved one.
+
+    Partial lineups are allowed; unassigned seats come back with a null player.
+    An empty ``assignments`` list saves nothing, which is the same as DELETE:
+    the team falls back to the computed optimal lineup.
+    """
+    team, league = _get_manual_team(db, team_id)
+    pairs = _validated_assignments(db, team, league, payload.assignments)
+
+    db.query(RosterSlot).filter(
+        RosterSlot.team_id == team.id,
+        RosterSlot.week == evaluator.MANUAL_LINEUP_WEEK,
+    ).delete(synchronize_session=False)
+    for player_id, slot in pairs:
+        db.add(
+            RosterSlot(
+                team_id=team.id,
+                week=evaluator.MANUAL_LINEUP_WEEK,
+                player_id=player_id,
+                selected_position=slot,
+            )
+        )
+    db.commit()
+
+    return lineup_response(db, league, team.id)
+
+
+@router.delete("/teams/{team_id}/lineup", status_code=204)
+def clear_lineup(team_id: int, db: Session = Depends(get_db)) -> Response:
+    """Drop the saved lineup, reverting the team to the computed optimal one."""
+    team, _league = _get_manual_team(db, team_id)
+
+    db.query(RosterSlot).filter(
+        RosterSlot.team_id == team.id,
+        RosterSlot.week == evaluator.MANUAL_LINEUP_WEEK,
+    ).delete(synchronize_session=False)
     db.commit()
     return Response(status_code=204)

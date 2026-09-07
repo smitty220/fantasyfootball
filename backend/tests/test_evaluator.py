@@ -11,6 +11,7 @@ from app.models import (
     LeaguePlayer,
     Player,
     Projection,
+    RosterSlot,
     Team,
     TradeValue,
     TrendingSignal,
@@ -831,7 +832,11 @@ def test_my_players_flex_occupant_matches_the_optimal_lineup(
     flex = next(row for row in my_players if row["starter_slot"] == "FLEX")
     # WR3 (100) beats RB3 (90) for the flex spot in both views.
     assert flex["full_name"] == "WR3"
-    assert [(row["slot"], row["full_name"]) for row in lineup["starters"]] == [
+    assert [
+        (entry["slot"], entry["player"]["full_name"])
+        for entry in lineup["slots"]
+        if entry["player"] is not None
+    ] == [
         (row["starter_slot"], row["full_name"]) for row in my_players if row["is_starter"]
     ]
 
@@ -890,12 +895,23 @@ def test_my_players_is_empty_without_a_my_team(db_session):
 # --- team_lineup -----------------------------------------------------------
 
 
-def test_team_lineup_splits_starters_and_bench(full_lineup_league, db_session):
+def seats(lineup: dict) -> list[tuple[str, str | None]]:
+    """``[(slot, occupant name or None)]`` for every seat in the lineup."""
+    return [
+        (entry["slot"], entry["player"]["full_name"] if entry["player"] else None)
+        for entry in lineup["slots"]
+    ]
+
+
+def test_team_lineup_fills_every_slot_and_benches_the_rest(
+    full_lineup_league, db_session
+):
     league, mine, _rival, _players = full_lineup_league
     lineup = evaluator.team_lineup(db_session, league, mine.id, season=SEASON)
 
     assert lineup["week"] == 1
-    assert [(row["slot"], row["full_name"]) for row in lineup["starters"]] == [
+    assert lineup["source"] == "auto"
+    assert seats(lineup) == [
         ("QB", "QB1"),
         ("RB", "RB1"),
         ("RB", "RB2"),
@@ -908,15 +924,17 @@ def test_team_lineup_splits_starters_and_bench(full_lineup_league, db_session):
     ]
     assert [row["full_name"] for row in lineup["bench"]] == ["RB3"]
 
-    starter = lineup["starters"][1]
+    starter = lineup["slots"][1]
     assert starter == {
         "slot": "RB",
-        "player_id": _players["RB1"].id,
-        "full_name": "RB1",
-        "position": "RB",
-        "nfl_team": "SF",
-        "week_points": 18.0,
-        "ros_points": 200.0,
+        "player": {
+            "player_id": _players["RB1"].id,
+            "full_name": "RB1",
+            "position": "RB",
+            "nfl_team": "SF",
+            "week_points": 18.0,
+            "ros_points": 200.0,
+        },
     }
     assert "slot" not in lineup["bench"][0]
     assert lineup["bench"][0]["ros_points"] == 90.0
@@ -927,22 +945,214 @@ def test_team_lineup_works_for_any_team(full_lineup_league, db_session):
     league, _mine, rival, _players = full_lineup_league
     lineup = evaluator.team_lineup(db_session, league, rival.id, season=SEASON)
 
-    # A two-player roster fills only the slots it can.
-    assert [(row["slot"], row["full_name"]) for row in lineup["starters"]] == [
+    # A two-player roster fills only the slots it can; the rest render empty.
+    assert seats(lineup) == [
         ("QB", "Rival QB"),
         ("RB", "Rival RB"),
+        ("RB", None),
+        ("WR", None),
+        ("WR", None),
+        ("TE", None),
+        ("FLEX", None),
+        ("K", None),
+        ("DEF", None),
     ]
     assert lineup["bench"] == []
 
 
-def test_team_lineup_of_an_empty_roster_is_empty(full_lineup_league, db_session):
+def test_team_lineup_of_an_empty_roster_is_all_empty_slots(
+    full_lineup_league, db_session
+):
     league, _mine, _rival, _players = full_lineup_league
     empty = make_team(db_session, league, "Nobody")
     db_session.commit()
 
     lineup = evaluator.team_lineup(db_session, league, empty.id, season=SEASON)
-    assert lineup["starters"] == []
+    assert lineup["source"] == "auto"
+    assert all(entry["player"] is None for entry in lineup["slots"])
+    assert [entry["slot"] for entry in lineup["slots"]] == [
+        "QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "K", "DEF"
+    ]
     assert lineup["bench"] == []
+
+
+# --- saved (manual) lineups ------------------------------------------------
+
+
+def save_lineup(db, team: Team, assignments: dict[Player, str]) -> None:
+    """Store an owner-chosen lineup the way the manual router does."""
+    db.query(RosterSlot).filter(
+        RosterSlot.team_id == team.id,
+        RosterSlot.week == evaluator.MANUAL_LINEUP_WEEK,
+    ).delete(synchronize_session=False)
+    for player, slot in assignments.items():
+        db.add(
+            RosterSlot(
+                team_id=team.id,
+                week=evaluator.MANUAL_LINEUP_WEEK,
+                player_id=player.id,
+                selected_position=slot,
+            )
+        )
+    db.commit()
+
+
+def test_manual_lineup_is_none_without_saved_rows(full_lineup_league, db_session):
+    _league, mine, _rival, _players = full_lineup_league
+    assert evaluator.manual_lineup(db_session, mine.id) is None
+
+
+def test_manual_lineup_reads_back_normalized_slots(full_lineup_league, db_session):
+    _league, mine, _rival, players = full_lineup_league
+    save_lineup(db_session, mine, {players["QB1"]: "QB", players["RB3"]: "W/R/T"})
+
+    assert evaluator.manual_lineup(db_session, mine.id) == {
+        players["QB1"].id: "QB",
+        players["RB3"].id: "FLEX",
+    }
+
+
+def test_team_lineup_prefers_the_saved_lineup(full_lineup_league, db_session):
+    league, mine, _rival, players = full_lineup_league
+    # Deliberately not the optimal lineup: RB3 (90) starts over RB2 (180),
+    # and the FLEX holds RB2 rather than WR3.
+    save_lineup(
+        db_session,
+        mine,
+        {
+            players["QB1"]: "QB",
+            players["RB1"]: "RB",
+            players["RB3"]: "RB",
+            players["RB2"]: "FLEX",
+        },
+    )
+    lineup = evaluator.team_lineup(db_session, league, mine.id, season=SEASON)
+
+    assert lineup["source"] == "manual"
+    assert seats(lineup) == [
+        ("QB", "QB1"),
+        ("RB", "RB1"),
+        ("RB", "RB3"),
+        ("WR", None),
+        ("WR", None),
+        ("TE", None),
+        ("FLEX", "RB2"),
+        ("K", None),
+        ("DEF", None),
+    ]
+    # Everyone the owner did not start is bench, best ROS points first.
+    assert [row["full_name"] for row in lineup["bench"]] == [
+        "WR1",
+        "WR2",
+        "DEF1",
+        "K1",
+        "WR3",
+        "TE1",
+    ]
+
+
+def test_team_lineup_reverts_to_auto_when_the_saved_lineup_is_cleared(
+    full_lineup_league, db_session
+):
+    league, mine, _rival, players = full_lineup_league
+    save_lineup(db_session, mine, {players["RB3"]: "RB"})
+    assert evaluator.team_lineup(db_session, league, mine.id, season=SEASON)[
+        "source"
+    ] == "manual"
+
+    db_session.query(RosterSlot).filter(RosterSlot.team_id == mine.id).delete()
+    db_session.commit()
+
+    lineup = evaluator.team_lineup(db_session, league, mine.id, season=SEASON)
+    assert lineup["source"] == "auto"
+    assert seats(lineup)[1] == ("RB", "RB1")
+
+
+def test_team_lineup_ignores_stale_saved_rows(full_lineup_league, db_session):
+    """Dropped players, unknown slots and overflow never reach the response."""
+    league, mine, rival, players = full_lineup_league
+    rival_rb = db_session.query(Player).filter(Player.full_name == "Rival RB").one()
+    save_lineup(
+        db_session,
+        mine,
+        {
+            players["RB1"]: "RB",
+            players["RB2"]: "RB",
+            players["RB3"]: "RB",  # a third RB: the league has only two seats
+            rival_rb: "WR",  # not on this roster at all
+            players["TE1"]: "BN",  # not a starting slot
+        },
+    )
+    lineup = evaluator.team_lineup(db_session, league, mine.id, season=SEASON)
+
+    assert seats(lineup) == [
+        ("QB", None),
+        ("RB", "RB1"),
+        ("RB", "RB2"),
+        ("WR", None),
+        ("WR", None),
+        ("TE", None),
+        ("FLEX", None),
+        ("K", None),
+        ("DEF", None),
+    ]
+    assert "RB3" in {row["full_name"] for row in lineup["bench"]}
+    assert "Rival RB" not in {row["full_name"] for row in lineup["bench"]}
+
+
+def test_my_players_follow_the_saved_lineup(full_lineup_league, db_session):
+    league, mine, _rival, players = full_lineup_league
+    save_lineup(
+        db_session, mine, {players["RB3"]: "RB", players["WR3"]: "FLEX"}
+    )
+
+    rows = {
+        row["full_name"]: row
+        for row in evaluator.evaluate_free_agents(db_session, league, season=SEASON)[
+            "my_players"
+        ]
+    }
+    assert rows["RB3"]["is_starter"] is True
+    assert rows["RB3"]["starter_slot"] == "RB"
+    assert rows["WR3"]["starter_slot"] == "FLEX"
+    # The ROS-optimal starters are on the bench now that the owner said so.
+    assert rows["RB1"]["is_starter"] is False
+    assert rows["QB1"]["is_starter"] is False
+
+
+def test_deltas_are_measured_against_the_saved_starters(
+    full_lineup_league, db_session
+):
+    league, mine, _rival, players = full_lineup_league
+    set_week_points(db_session, players["RB3"], 5)
+    fa = make_player(db_session, "Hot FA RB", "RB", 150)
+    set_week_points(db_session, fa, 12)
+    db_session.commit()
+
+    auto = _by_name(evaluator.evaluate_free_agents(db_session, league, season=SEASON))
+    # Auto starters: the worst FLEX-eligible ROS starter is TE1 (80).
+    assert auto["Hot FA RB"]["my_worst_starter_delta"] == 70.0
+
+    save_lineup(db_session, mine, {players["RB3"]: "RB", players["QB1"]: "QB"})
+    manual = _by_name(evaluator.evaluate_free_agents(db_session, league, season=SEASON))
+
+    # Now the only FLEX-eligible starter is RB3: 90 ROS points, 5 this week.
+    assert manual["Hot FA RB"]["my_worst_starter_delta"] == 60.0
+    assert manual["Hot FA RB"]["week_delta"] == 7.0
+
+
+def test_a_position_with_no_saved_starter_has_no_baseline(
+    full_lineup_league, db_session
+):
+    """Bench-only edge case: no starter at a position means a null delta."""
+    league, mine, _rival, players = full_lineup_league
+    save_lineup(db_session, mine, {players["QB1"]: "QB"})
+    make_player(db_session, "Hot FA RB", "RB", 150)
+    db_session.commit()
+
+    rows = _by_name(evaluator.evaluate_free_agents(db_session, league, season=SEASON))
+    assert rows["Hot FA RB"]["my_worst_starter_delta"] is None
+    assert rows["Hot FA RB"]["week_delta"] is None
 
 
 # --- trades ----------------------------------------------------------------

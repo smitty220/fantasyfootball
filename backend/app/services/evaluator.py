@@ -19,10 +19,12 @@ direct roster slots plus a share of each FLEX slot.
 *Week points* come from the single-week projection rows (``week = N``) for
 whatever week the ingestion last stored -- see :func:`current_projection_week`.
 
-*Starters* are always the ROS-optimal lineup (:func:`_fill_lineup` on ROS
-points). One starter set is used for every comparison, weekly and ROS alike,
-so the "who would this pickup replace?" answer never depends on which column
-you are looking at.
+*Starters* come from the owner's saved lineup when one exists
+(:func:`manual_lineup` -- ``RosterSlot`` rows stored under
+:data:`MANUAL_LINEUP_WEEK`), and otherwise from the ROS-optimal lineup
+(:func:`_fill_lineup` on ROS points). One starter set is used for every
+comparison, weekly and ROS alike, so the "who would this pickup replace?"
+answer never depends on which column you are looking at.
 """
 
 from __future__ import annotations
@@ -38,6 +40,7 @@ from app.models import (
     LeaguePlayer,
     Player,
     Projection,
+    RosterSlot,
     Team,
     TradeValue,
     TrendingSignal,
@@ -72,6 +75,11 @@ _SLOT_ALIASES: dict[str, str] = {
     "D/ST": "DEF",
     "PK": "K",
 }
+
+#: ``RosterSlot.week`` sentinel for an owner-chosen "standing" lineup. Yahoo's
+#: real weekly rosters are stored under week >= 1, so week 0 can never collide
+#: with a synced roster.
+MANUAL_LINEUP_WEEK = 0
 
 TRADE_VALUE_SOURCE = "fantasycalc"
 
@@ -182,7 +190,8 @@ def _projections_for(
 # --- roster shape ----------------------------------------------------------
 
 
-def _normalize_slot(slot: str) -> str:
+def normalize_slot(slot: str) -> str:
+    """Canonical slot label: upper-cased and de-aliased (``W/R/T`` -> ``FLEX``)."""
     label = (slot or "").strip().upper()
     return _SLOT_ALIASES.get(label, label)
 
@@ -195,7 +204,7 @@ def position_filter(position: str | None) -> list[str] | None:
     """
     if not position or not position.strip():
         return None
-    label = _normalize_slot(position)
+    label = normalize_slot(position)
     if label == "FLEX":
         return list(FLEX_POSITIONS)
     return [label]
@@ -221,7 +230,7 @@ def starter_slots(roster_slots: Mapping[str, int]) -> dict[str, float]:
     flex_count = 0
 
     for raw_slot, count in roster_slots.items():
-        slot = _normalize_slot(raw_slot)
+        slot = normalize_slot(raw_slot)
         if slot in BENCH_SLOTS or not count:
             continue
         if slot == "FLEX":
@@ -292,6 +301,46 @@ def replacement_levels(db: Session, league: League, season: int | None = None) -
 # --- lineups ---------------------------------------------------------------
 
 
+#: Order starters are displayed in.
+STARTER_SLOT_ORDER: tuple[str, ...] = ("QB", "RB", "WR", "TE", "FLEX", "K", "DEF")
+
+
+def _slot_rank(slot: str) -> int:
+    try:
+        return STARTER_SLOT_ORDER.index(slot)
+    except ValueError:  # pragma: no cover - defensive; slots come from _fill_lineup
+        return len(STARTER_SLOT_ORDER)
+
+
+def starting_slot_counts(roster_slots: Mapping[str, int]) -> dict[str, int]:
+    """How many instances of each *starting* slot the league has.
+
+    Slot labels are normalized (``W/R/T`` -> ``FLEX``) and bench/IR slots are
+    dropped, so ``{QB:1, "W/R/T":1, BN:6}`` becomes ``{QB:1, FLEX:1}``.
+    """
+    counts: dict[str, int] = {}
+    for raw_slot, count in roster_slots.items():
+        slot = normalize_slot(raw_slot)
+        if slot in BENCH_SLOTS or not count:
+            continue
+        if slot == "FLEX" or slot in STARTABLE_POSITIONS:
+            counts[slot] = counts.get(slot, 0) + int(count)
+    return counts
+
+
+def slot_instances(roster_slots: Mapping[str, int]) -> list[str]:
+    """Every starting slot instance, in display order.
+
+    ``{QB:1, RB:2, FLEX:1}`` becomes ``["QB", "RB", "RB", "FLEX"]`` -- one
+    entry per seat in the lineup, which is what the UI renders.
+    """
+    counts = starting_slot_counts(roster_slots)
+    instances: list[str] = []
+    for slot in STARTER_SLOT_ORDER:
+        instances.extend([slot] * counts.get(slot, 0))
+    return instances
+
+
 def _fill_lineup(
     roster_slots: Mapping[str, int],
     points: Mapping[int, float],
@@ -312,13 +361,7 @@ def _fill_lineup(
     used: set[int] = set()
     lineup: list[tuple[str, int]] = []
 
-    counts: dict[str, int] = {}
-    for raw_slot, count in roster_slots.items():
-        slot = _normalize_slot(raw_slot)
-        if slot in BENCH_SLOTS or not count:
-            continue
-        if slot == "FLEX" or slot in STARTABLE_POSITIONS:
-            counts[slot] = counts.get(slot, 0) + int(count)
+    counts = starting_slot_counts(roster_slots)
 
     def take(eligible: tuple[str, ...]) -> int | None:
         for pid in available:
@@ -427,12 +470,70 @@ def _team_player_ids(db: Session, league: League, team_id: int) -> list[int]:
     ]
 
 
-class TeamRoster(NamedTuple):
-    """One team's players, its optimal lineup, and both points views.
+def manual_lineup(db: Session, team_id: int) -> dict[int, str] | None:
+    """The owner's saved lineup for a team: ``player_id -> slot``.
 
-    The lineup is always the *ROS-optimal* one: a single starter set drives
-    both the ROS and the weekly comparisons, so the two never disagree about
-    who is starting.
+    ``None`` when the team has no saved lineup at all, which is what makes the
+    rest of the engine fall back to the computed optimal one. Slot labels are
+    normalized, so a stored ``W/R/T`` reads back as ``FLEX``.
+    """
+    rows = (
+        db.query(RosterSlot)
+        .filter(
+            RosterSlot.team_id == team_id,
+            RosterSlot.week == MANUAL_LINEUP_WEEK,
+        )
+        .all()
+    )
+    if not rows:
+        return None
+    return {
+        row.player_id: normalize_slot(row.selected_position or "") for row in rows
+    }
+
+
+def _manual_lineup_pairs(
+    assignments: Mapping[int, str],
+    roster_slots: Mapping[str, int],
+    player_ids: Iterable[int],
+    points: Mapping[int, float],
+) -> list[tuple[str, int]]:
+    """A saved lineup as ``(slot, player_id)`` pairs, in display order.
+
+    Defensive against stale rows: assignments for players no longer on the
+    roster, for slots the league does not have, and any overflow past a slot's
+    capacity are dropped (best ROS points first) so the caller sees a lineup
+    the league's roster shape can actually hold.
+    """
+    counts = starting_slot_counts(roster_slots)
+    rostered = set(player_ids)
+
+    candidates = [
+        (slot, pid)
+        for pid, slot in assignments.items()
+        if pid in rostered and counts.get(slot)
+    ]
+    candidates.sort(
+        key=lambda pair: (_slot_rank(pair[0]), -points.get(pair[1], 0.0), pair[1])
+    )
+
+    filled: dict[str, int] = {}
+    lineup: list[tuple[str, int]] = []
+    for slot, pid in candidates:
+        if filled.get(slot, 0) >= counts[slot]:
+            continue
+        filled[slot] = filled.get(slot, 0) + 1
+        lineup.append((slot, pid))
+    return lineup
+
+
+class TeamRoster(NamedTuple):
+    """One team's players, its starting lineup, and both points views.
+
+    The lineup is the owner's saved one when the team has one, and the
+    *ROS-optimal* one otherwise (``source`` says which). Either way a single
+    starter set drives both the ROS and the weekly comparisons, so the two
+    never disagree about who is starting.
     """
 
     player_ids: list[int]
@@ -440,6 +541,7 @@ class TeamRoster(NamedTuple):
     ros_points: dict[int, float]
     week_points: dict[int, float]
     positions: dict[int, str | None]
+    source: str = "auto"
 
     @property
     def starter_slots(self) -> dict[int, str]:
@@ -453,8 +555,16 @@ def _team_roster(
     ids = _team_player_ids(db, league, team_id)
     ros_points, positions = _points_and_positions(db, league, ids, season)
     week_points = _week_points(db, league, ids, season, week)
-    lineup = _fill_lineup(league_roster_slots(league), ros_points, positions, ids)
-    return TeamRoster(ids, lineup, ros_points, week_points, positions)
+    roster_slots = league_roster_slots(league)
+
+    assignments = manual_lineup(db, team_id)
+    if assignments is not None:
+        lineup = _manual_lineup_pairs(assignments, roster_slots, ids, ros_points)
+        source = "manual"
+    else:
+        lineup = _fill_lineup(roster_slots, ros_points, positions, ids)
+        source = "auto"
+    return TeamRoster(ids, lineup, ros_points, week_points, positions, source)
 
 
 def _worst_starters(
@@ -462,12 +572,18 @@ def _worst_starters(
 ) -> dict[str, float]:
     """Worst starter points per position, under one points view.
 
+    The starter set is ``roster.lineup``: the owner's saved lineup when the
+    team has one, the ROS-optimal lineup otherwise.
+
     FLEX-eligible positions (RB/WR/TE) all map to the same figure: the worst
     starter among the team's RB/WR/TE starters, because any of them could be
     the one a new FLEX-eligible player displaces.
 
     Starters missing from ``points`` (no weekly projection, say) are left out
-    of the comparison entirely rather than counted as 0.
+    of the comparison entirely rather than counted as 0. A position with no
+    starter at all is simply absent, which callers surface as a null delta --
+    so a saved lineup that benches every RB, say, gives RB pickups no
+    baseline to beat.
     """
     by_position: dict[str, list[float]] = {}
     flex_pool: list[float] = []
@@ -626,17 +742,6 @@ def evaluate_free_agents(
 # --- my roster / lineups ---------------------------------------------------
 
 
-#: Order starters are displayed in.
-STARTER_SLOT_ORDER: tuple[str, ...] = ("QB", "RB", "WR", "TE", "FLEX", "K", "DEF")
-
-
-def _slot_rank(slot: str) -> int:
-    try:
-        return STARTER_SLOT_ORDER.index(slot)
-    except ValueError:  # pragma: no cover - defensive; slots come from _fill_lineup
-        return len(STARTER_SLOT_ORDER)
-
-
 def _my_player_rows(
     db: Session, roster: TeamRoster | None, positions: Sequence[str] | None
 ) -> list[dict]:
@@ -682,7 +787,15 @@ def _my_player_rows(
 def team_lineup(
     db: Session, league: League, team_id: int, season: int | None = None
 ) -> dict:
-    """One team's ROS-optimal lineup, split into starters and bench.
+    """One team's starting lineup, seat by seat, plus its bench.
+
+    ``slots`` has one entry per seat the league's roster shape defines (two RB
+    slots means two ``RB`` entries), in :data:`STARTER_SLOT_ORDER`. Seats are
+    filled from the owner's saved lineup when the team has one
+    (``source == "manual"``, and a seat the owner left empty comes back with a
+    null ``player``), and from the ROS-optimal lineup otherwise
+    (``source == "auto"``, which never leaves a seat empty while an eligible
+    player is on the bench).
 
     Works for any team in the league, not just mine.
     """
@@ -706,16 +819,22 @@ def team_lineup(
             "ros_points": round(roster.ros_points.get(pid, 0.0), 2),
         }
 
-    starters = [
-        {"slot": slot, **row(pid)}
-        for slot, pid in sorted(roster.lineup, key=lambda pair: _slot_rank(pair[0]))
-    ]
+    queues: dict[str, list[int]] = {}
+    for slot, pid in roster.lineup:
+        queues.setdefault(slot, []).append(pid)
+
+    slots = []
+    for slot in slot_instances(league_roster_slots(league)):
+        queue = queues.get(slot)
+        pid = queue.pop(0) if queue else None
+        slots.append({"slot": slot, "player": row(pid) if pid is not None else None})
+
     started = {pid for _slot, pid in roster.lineup}
     bench = sorted(
         (row(pid) for pid in roster.player_ids if pid not in started),
         key=lambda entry: (-entry["ros_points"], entry["full_name"]),
     )
-    return {"week": week, "starters": starters, "bench": bench}
+    return {"week": week, "source": roster.source, "slots": slots, "bench": bench}
 
 
 # --- trades ----------------------------------------------------------------

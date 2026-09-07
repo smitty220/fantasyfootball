@@ -64,15 +64,20 @@ class LineupPlayer(BaseModel):
     ros_points: float
 
 
-class LineupStarter(LineupPlayer):
+class LineupSlot(BaseModel):
+    """One seat in the starting lineup; ``player`` is null when it is empty."""
+
     slot: str
+    player: LineupPlayer | None = None
 
 
 class TeamLineupResponse(BaseModel):
     league_key: str
     team_id: int
     week: int | None = None
-    starters: list[LineupStarter]
+    #: "manual" when the owner saved this lineup, "auto" when we computed it.
+    source: str
+    slots: list[LineupSlot]
     bench: list[LineupPlayer]
 
 
@@ -129,6 +134,27 @@ def _get_league(db: Session, league_key: str) -> League:
     return league
 
 
+def lineup_response(
+    db: Session, league: League, team_id: int, season: int | None = None
+) -> TeamLineupResponse:
+    """The lineup payload for one team.
+
+    Shared with the manual-league lineup editor so saving a lineup answers in
+    exactly the shape the GET returns.
+    """
+    result = evaluator.team_lineup(
+        db, league, team_id, season=season if season is not None else current_nfl_season()
+    )
+    return TeamLineupResponse(
+        league_key=league.league_key,
+        team_id=team_id,
+        week=result["week"],
+        source=result["source"],
+        slots=[LineupSlot(**slot) for slot in result["slots"]],
+        bench=[LineupPlayer(**row) for row in result["bench"]],
+    )
+
+
 def _get_team(db: Session, league: League, team_id: int) -> Team:
     team = db.query(Team).filter(Team.id == team_id).one_or_none()
     if team is None or team.league_id != league.id:
@@ -176,18 +202,10 @@ def team_lineup(
     team_id: int,
     db: Session = Depends(get_db),
 ) -> TeamLineupResponse:
-    """The ROS-optimal starting lineup for any team in the league."""
+    """One team's starting lineup: the owner's if saved, else ROS-optimal."""
     league = _get_league(db, league_key)
     team = _get_team(db, league, team_id)
-
-    result = evaluator.team_lineup(db, league, team.id, season=current_nfl_season())
-    return TeamLineupResponse(
-        league_key=league.league_key,
-        team_id=team.id,
-        week=result["week"],
-        starters=[LineupStarter(**row) for row in result["starters"]],
-        bench=[LineupPlayer(**row) for row in result["bench"]],
-    )
+    return lineup_response(db, league, team.id)
 
 
 @router.post("/{league_key}/evaluate/trade", response_model=TradeResponse)
