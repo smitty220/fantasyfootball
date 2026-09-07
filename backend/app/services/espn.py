@@ -442,6 +442,15 @@ def refresh_projections(
                     else:
                         matched_by_name += 1
 
+                    # ESPN platform-wide roster/start rates ride along for free.
+                    ownership = player_payload.get("ownership") or {}
+                    if ownership.get("percentOwned") is not None:
+                        player.percent_owned = round(float(ownership["percentOwned"]), 1)
+                    if ownership.get("percentStarted") is not None:
+                        player.percent_started = round(
+                            float(ownership["percentStarted"]), 1
+                        )
+
                     _upsert_projection(db, player.id, season, week, stat_json, fetched_at)
                     saved += 1
 

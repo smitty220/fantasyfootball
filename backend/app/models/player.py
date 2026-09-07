@@ -30,6 +30,9 @@ class Player(Base):
     espn_id: Mapped[str | None] = mapped_column(String(16), index=True)
     fantasypros_id: Mapped[str | None] = mapped_column(String(16), index=True)
     gsis_id: Mapped[str | None] = mapped_column(String(16), index=True)
+    # Platform-wide roster/start rates (currently sourced from ESPN).
+    percent_owned: Mapped[float | None] = mapped_column(Float)
+    percent_started: Mapped[float | None] = mapped_column(Float)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
