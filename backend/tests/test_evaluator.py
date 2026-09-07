@@ -934,6 +934,9 @@ def test_team_lineup_fills_every_slot_and_benches_the_rest(
             "nfl_team": "SF",
             "week_points": 18.0,
             "ros_points": 200.0,
+            "injury_status": None,
+            "percent_owned": None,
+            "percent_started": None,
         },
     }
     assert "slot" not in lineup["bench"][0]
