@@ -141,6 +141,9 @@ def refresh_players(db: Session) -> str:
             name = _player_name(entry)
             if not name:
                 continue
+            # Sleeper's dump contains literal placeholder records.
+            if name.lower() in ("player invalid", "duplicate player"):
+                continue
 
             ids = {
                 "yahoo_id": _str_or_none(entry.get("yahoo_id")),
