@@ -44,7 +44,14 @@ export function LeagueDetailPage() {
 
   function loadTeams() {
     getTeams(leagueKey)
-      .then(setTeams)
+      .then((loaded) => {
+        setTeams(loaded)
+        // Default the roster view to the owner's starred team.
+        setSelectedTeamId((current) => {
+          if (current !== null && loaded.some((t) => t.id === current)) return current
+          return loaded.find((t) => t.is_my_team)?.id ?? null
+        })
+      })
       .catch((err: unknown) => {
         setTeams([])
         showError(err instanceof ApiError ? err.message : 'Failed to load teams')
