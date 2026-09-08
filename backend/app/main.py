@@ -6,7 +6,7 @@ from fastapi.staticfiles import StaticFiles
 
 import app.models  # noqa: F401  (register models with Base before migrating)
 from app.middleware import SessionAuthMiddleware
-from app.migrations import run_migrations
+from app.migrations import backup_sqlite, run_migrations
 from app.routers import (
     app_auth,
     auth,
@@ -44,6 +44,7 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
+    backup_sqlite()
     run_migrations()
 
     app = FastAPI(title="Gridiron HQ", version="0.1.0", lifespan=lifespan)

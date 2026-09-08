@@ -42,6 +42,36 @@ def _alembic_config(bind: Engine) -> Config:
     return cfg
 
 
+def backup_sqlite(bind: Engine | None = None, keep: int = 7) -> Path | None:
+    """Copy a file-based SQLite DB to data-dir ``backups/`` before touching it.
+
+    One dated backup per day (a same-day restart doesn't overwrite the
+    morning's copy with a possibly-worse state); the newest ``keep`` are
+    retained. No-op for non-SQLite/empty/missing DBs.
+    """
+    import shutil
+    from datetime import date
+
+    bind = bind or _default_engine
+    url = str(bind.url)
+    if not url.startswith("sqlite:///"):
+        return None
+    db_path = Path(url.removeprefix("sqlite:///"))
+    if not db_path.is_file() or db_path.stat().st_size == 0:
+        return None
+
+    backups = db_path.parent / "backups"
+    backups.mkdir(exist_ok=True)
+    target = backups / f"{db_path.stem}-{date.today():%Y%m%d}{db_path.suffix}"
+    if not target.exists():
+        shutil.copy2(db_path, target)
+
+    existing = sorted(backups.glob(f"{db_path.stem}-*{db_path.suffix}"))
+    for old in existing[:-keep]:
+        old.unlink()
+    return target
+
+
 def run_migrations(bind: Engine | None = None) -> None:
     """Bring ``bind`` (default: the app's configured engine) up to head."""
     bind = bind or _default_engine
