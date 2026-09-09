@@ -21,6 +21,23 @@ from app.routers import (
 FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
 
 
+class SPAStaticFiles(StaticFiles):
+    """Serve the built SPA with a client-side-routing fallback.
+
+    A browser refresh on a route like ``/leagues/manual.1`` reaches the server
+    with a path only the frontend router knows; answer such misses with
+    ``index.html`` so the SPA can boot and route itself. Real ``/api`` paths
+    never get here (the routers claim them first), so a 404 from this mount is
+    always a frontend route.
+    """
+
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        if response.status_code == 404:
+            response = await super().get_response("index.html", scope)
+        return response
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Imported lazily (not at module top) so app.services.scheduler - and the
@@ -65,7 +82,7 @@ def create_app() -> FastAPI:
     if FRONTEND_DIST.is_dir():
         app.mount(
             "/",
-            StaticFiles(directory=FRONTEND_DIST, html=True),
+            SPAStaticFiles(directory=FRONTEND_DIST, html=True),
             name="frontend",
         )
 
