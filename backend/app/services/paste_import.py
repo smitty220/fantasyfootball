@@ -19,6 +19,7 @@ two teams must never wipe the other ten.
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
@@ -141,7 +142,9 @@ def parse_roster_paste(text: str) -> list[ParsedTeam]:
 
     for line in _significant_lines(text):
         if _HEADER_RE.match(line):
-            current = ParsedTeam(name=last_free or f"Team {len(teams) + 1}")
+            current = ParsedTeam(
+                name=sanitize_display_name(last_free or "") or f"Team {len(teams) + 1}"
+            )
             teams.append(current)
             current_player = None
             pending_slot = None
@@ -164,7 +167,9 @@ def parse_roster_paste(text: str) -> list[ParsedTeam]:
             pending_slot_label, pending_slot = pending_slot, None
             if _EMPTY_RE.match(line):
                 continue  # an unfilled slot contributes no player
-            current_player = ParsedPlayer(name=line, slot=pending_slot_label)
+            current_player = ParsedPlayer(
+                name=sanitize_display_name(line), slot=pending_slot_label
+            )
             current.players.append(current_player)
             continue
 
@@ -295,9 +300,31 @@ def _without_your_prefix(name: str) -> str:
     return stripped
 
 
+def sanitize_display_name(name: str) -> str:
+    """Strip the junk Yahoo copies alongside a name.
+
+    Real pastes carry trailing private-use icon glyphs (e.g. U+E037), other
+    control/format characters, and stray whitespace: ``"Black Gold "``
+    must equal ``"Black Gold"``.
+    """
+    cleaned = "".join(
+        ch
+        for ch in name
+        if not (0xE000 <= ord(ch) <= 0xF8FF)  # private-use icon glyphs
+        and unicodedata.category(ch) not in ("Cc", "Cf")
+    )
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _team_match_key(name: str) -> str:
+    """Aggressively normalized form for team-name equality."""
+    bare = _without_your_prefix(sanitize_display_name(name))
+    return bare.replace("’", "'").casefold()
+
+
 def _match_team(parsed_name: str, teams: Sequence[Team], taken: set[int]) -> Team | None:
     """Existing team for this pasted name: exact, then case-insensitive, then
-    ignoring Yahoo's "Your " prefix on either side."""
+    fully normalized (icon glyphs, "Your " prefix, curly quotes ignored)."""
     available = [team for team in teams if team.id not in taken]
 
     def first(predicate) -> Team | None:
@@ -312,8 +339,8 @@ def _match_team(parsed_name: str, teams: Sequence[Team], taken: set[int]) -> Tea
     if insensitive is not None:
         return insensitive
 
-    bare = _without_your_prefix(parsed_name).lower()
-    return first(lambda team: _without_your_prefix(team.name).lower() == bare)
+    key = _team_match_key(parsed_name)
+    return first(lambda team: _team_match_key(team.name) == key)
 
 
 # --- lineup validation -----------------------------------------------------
@@ -423,6 +450,19 @@ def import_roster_paste(db: Session, league: League, text: str) -> dict:
     parsed_teams = parse_roster_paste(text)
     index = _build_index(db)
     existing_teams = db.query(Team).filter(Team.league_id == league.id).all()
+
+    # Wrong-league guard: a paste whose team names match NONE of an already
+    # populated league's teams is almost certainly the other league's rosters
+    # page. Creating ten duplicate teams (and stealing shared players from the
+    # real ones) is far worse than asking the owner to double-check.
+    if existing_teams:
+        keys = {_team_match_key(team.name) for team in existing_teams}
+        if not any(_team_match_key(parsed.name) in keys for parsed in parsed_teams):
+            raise ValueError(
+                "None of the pasted team names match this league's teams -- "
+                "this looks like a different league's rosters page. Paste was "
+                "not applied."
+            )
 
     taken: set[int] = set()
     plans: list[dict] = []

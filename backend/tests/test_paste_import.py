@@ -704,3 +704,35 @@ def test_reimporting_the_same_paste_is_idempotent(client, db_session, pool, leag
 
     team = db_session.query(Team).filter(Team.name == "Your Suck my Dak!!").one()
     assert len(_lineup(db_session, team.id)) == 9
+
+
+def test_import_matches_a_team_name_with_yahoo_icon_glyphs(
+    client, db_session, pool, league_key
+):
+    """Real pastes carry trailing private-use glyphs (U+E037) after names."""
+    created = client.post(
+        f"/api/manual/leagues/{league_key}/teams", json={"name": "Black Gold"}
+    ).json()
+
+    text = _paste(("Black Gold ", [("QB", "Jalen Hurts", "Phi - QB")]))
+    body = _import(client, league_key, text).json()
+
+    assert body["teams"][0]["created"] is False
+    assert db_session.query(Team).count() == 1
+    assert _roster(db_session, created["id"]) == {"Jalen Hurts"}
+
+
+def test_import_rejects_a_paste_matching_no_existing_team(
+    client, db_session, pool, league_key
+):
+    """A populated league + zero name overlap = probably the wrong league."""
+    client.post(
+        f"/api/manual/leagues/{league_key}/teams", json={"name": "Real Team"}
+    )
+
+    text = _paste(("Some Other League Team", [("QB", "Jalen Hurts", "Phi - QB")]))
+    response = _import(client, league_key, text)
+
+    assert response.status_code == 400
+    assert "different league" in response.json()["detail"]
+    assert db_session.query(Team).count() == 1
