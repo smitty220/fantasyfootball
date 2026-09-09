@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models import League, LeaguePlayer, Matchup, Player, RosterSlot, Team
 from app.routers.evaluate import TeamLineupResponse, lineup_response
-from app.services import evaluator, scoring
+from app.services import evaluator, paste_import, scoring
 
 router = APIRouter(prefix="/api/manual", tags=["manual"])
 
@@ -91,6 +91,29 @@ class LineupAssignment(BaseModel):
 
 class LineupSet(BaseModel):
     assignments: list[LineupAssignment] = Field(default_factory=list)
+
+
+class RosterPasteImport(BaseModel):
+    #: Raw copy/paste of a Yahoo league "Rosters" page.
+    text: str
+
+
+class PasteImportTeamReport(BaseModel):
+    team: str
+    created: bool
+    added: int
+    removed: int
+    kept: int
+    lineup_set: bool
+    #: Why the parsed lineup was skipped, when it was.
+    lineup_error: str | None = None
+    #: Names the paste listed that no player row could be resolved for.
+    unmatched: list[str] = Field(default_factory=list)
+
+
+class PasteImportReport(BaseModel):
+    teams: list[PasteImportTeamReport] = Field(default_factory=list)
+    total_unmatched: int = 0
 
 
 # --- helpers -------------------------------------------------------------
@@ -385,6 +408,29 @@ def remove_roster_player(
     return Response(status_code=204)
 
 
+# --- bulk import -----------------------------------------------------------
+
+
+@router.post(
+    "/leagues/{league_key}/import-roster-paste", response_model=PasteImportReport
+)
+def import_roster_paste(
+    league_key: str, payload: RosterPasteImport, db: Session = Depends(get_db)
+) -> dict:
+    """Create/refresh this league's teams, rosters and lineups from pasted text.
+
+    The paste is authoritative for the teams it names -- their rosters are
+    replaced and their saved lineups rebuilt -- and silent about every other
+    team. Players it lists that we can't resolve, and lineups that don't fit
+    the league's slots, come back in the report instead of failing the import.
+    """
+    league = _get_manual_league(db, league_key)
+    try:
+        return paste_import.import_roster_paste(db, league, payload.text)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 # --- lineup endpoints ------------------------------------------------------
 
 
@@ -393,87 +439,17 @@ def _validated_assignments(
 ) -> list[tuple[int, str]]:
     """``(player_id, slot)`` pairs, or a 400 explaining why they are illegal.
 
-    Partial lineups are fine -- an owner may fill three slots and leave the
-    rest to be shown as empty seats -- but every assignment must name a player
-    on this team, a slot this league actually has, and a position that slot
-    accepts, with no slot over its capacity and no player used twice.
+    The rules themselves live in
+    :func:`app.services.paste_import.validate_lineup_assignments` so that the
+    paste importer applies exactly the same ones; this only turns a rejection
+    into the HTTP error.
     """
-    rostered = {
-        row.player_id
-        for row in db.query(LeaguePlayer.player_id).filter(
-            LeaguePlayer.league_id == league.id,
-            LeaguePlayer.on_team_id == team.id,
+    try:
+        return paste_import.validate_lineup_assignments(
+            db, team, league, [(a.player_id, a.slot) for a in assignments]
         )
-    }
-    capacity = evaluator.starting_slot_counts(evaluator.league_roster_slots(league))
-    positions = {
-        player.id: player.position
-        for player in db.query(Player)
-        .filter(Player.id.in_([a.player_id for a in assignments]))
-        .all()
-    }
-
-    pairs: list[tuple[int, str]] = []
-    seen: set[int] = set()
-    used: dict[str, int] = {}
-
-    for assignment in assignments:
-        player_id = assignment.player_id
-        if player_id in seen:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Player {player_id} is assigned to more than one slot",
-            )
-        seen.add(player_id)
-
-        if player_id not in rostered:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Player {player_id} is not on {team.name}'s roster",
-            )
-
-        slot = evaluator.normalize_slot(assignment.slot)
-        if not capacity.get(slot):
-            available = ", ".join(
-                s for s in evaluator.STARTER_SLOT_ORDER if capacity.get(s)
-            )
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"{assignment.slot!r} is not a starting slot in this league; "
-                    f"available slots: {available or 'none'}"
-                ),
-            )
-
-        used[slot] = used.get(slot, 0) + 1
-        if used[slot] > capacity[slot]:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"This league has only {capacity[slot]} {slot} slot(s); "
-                    f"{used[slot]} players were assigned to {slot}"
-                ),
-            )
-
-        position = positions.get(player_id)
-        if slot == "FLEX":
-            eligible: tuple[str, ...] = evaluator.FLEX_POSITIONS
-        elif slot == "SUPERFLEX":
-            eligible = evaluator.SUPERFLEX_POSITIONS
-        else:
-            eligible = (slot,)
-        if position not in eligible:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Player {player_id} ({position or 'unknown position'}) "
-                    f"cannot start in a {slot} slot"
-                ),
-            )
-
-        pairs.append((player_id, slot))
-
-    return pairs
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.put("/teams/{team_id}/lineup", response_model=TeamLineupResponse)
