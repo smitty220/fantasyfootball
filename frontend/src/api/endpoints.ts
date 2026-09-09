@@ -9,6 +9,7 @@ import type {
   FreeAgent,
   FreeAgentsEvalResponse,
   HealthResponse,
+  ImportRosterPasteResponse,
   League,
   LeagueDetail,
   LineupAssignment,
@@ -64,6 +65,10 @@ export function deleteManualLeague(leagueKey: string): Promise<void> {
 
 export function getTeams(leagueKey: string): Promise<Team[]> {
   return apiGet(`/api/leagues/${encodeURIComponent(leagueKey)}/teams`)
+}
+
+export function importRosterPaste(leagueKey: string, text: string): Promise<ImportRosterPasteResponse> {
+  return apiPost(`/api/manual/leagues/${encodeURIComponent(leagueKey)}/import-roster-paste`, { text })
 }
 
 export function createTeam(leagueKey: string, payload: CreateTeamPayload): Promise<Team> {

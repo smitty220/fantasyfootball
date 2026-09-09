@@ -572,6 +572,13 @@ a.tab {
   margin-bottom: 10px;
 }
 
+.panel-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .team-list {
   list-style: none;
   margin: 0;
@@ -1355,4 +1362,104 @@ a.tab {
   background: var(--code-bg);
   padding: 8px 10px;
   border-radius: 6px;
+}
+
+/* Import roster panel */
+.import-roster-panel {
+  margin-bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px dashed var(--border);
+}
+
+.import-roster-textarea {
+  width: 100%;
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 145%;
+  min-height: 220px;
+}
+
+.import-roster-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.import-report {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.import-report-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.import-report-table th {
+  text-align: left;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text);
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.import-report-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-h);
+  vertical-align: middle;
+}
+
+.import-report-counts {
+  display: flex;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.import-count-added {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.import-count-removed {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.import-count-kept {
+  color: var(--text);
+}
+
+.import-report-lineup {
+  text-align: center;
+}
+
+.import-report-unmatched-row td {
+  background: var(--warning-bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.import-report-unmatched-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--warning);
+  margin-right: 8px;
+}
+
+.import-report-unmatched-row .badge {
+  margin-right: 6px;
+}
+
+.import-report-summary {
+  font-size: 13px;
+  color: var(--warning);
+  font-weight: 600;
 }

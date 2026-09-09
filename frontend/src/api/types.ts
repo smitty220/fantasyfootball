@@ -265,6 +265,21 @@ export interface DataScheduleRow {
   next_run_at: string | null
 }
 
+export interface ImportRosterTeamResult {
+  team: string
+  created: boolean
+  added: number
+  removed: number
+  kept: number
+  lineup_set: boolean
+  unmatched: string[]
+}
+
+export interface ImportRosterPasteResponse {
+  teams: ImportRosterTeamResult[]
+  total_unmatched: number
+}
+
 export interface YahooStatus {
   connected: boolean
   expires_at?: string | null

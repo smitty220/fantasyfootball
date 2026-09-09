@@ -9,6 +9,7 @@ import { useToast } from '../components/toastContext'
 import { useSession } from '../components/sessionContext'
 import { RosterEditor } from '../components/RosterEditor'
 import { FreeAgentsPanel } from '../components/FreeAgentsPanel'
+import { ImportRosterPanel } from '../components/ImportRosterPanel'
 
 type Tab = 'teams' | 'free-agents'
 
@@ -41,6 +42,8 @@ export function LeagueDetailPage() {
   const [newManagerName, setNewManagerName] = useState('')
   const [busyTeamId, setBusyTeamId] = useState<number | null>(null)
   const [addingTeam, setAddingTeam] = useState(false)
+  const [showImportPanel, setShowImportPanel] = useState(false)
+  const [rosterRefreshKey, setRosterRefreshKey] = useState(0)
 
   function loadTeams() {
     getTeams(leagueKey)
@@ -126,6 +129,11 @@ export function LeagueDetailPage() {
     }
   }
 
+  function handleRosterImported() {
+    loadTeams()
+    setRosterRefreshKey((k) => k + 1)
+  }
+
   async function handleToggleMyTeam(team: Team) {
     setBusyTeamId(team.id)
     try {
@@ -195,11 +203,24 @@ export function LeagueDetailPage() {
             <div className="panel-header">
               <h2>Teams</h2>
               {isManual && (
-                <Button variant="primary" onClick={() => setShowAddForm((v) => !v)}>
-                  {showAddForm ? 'Cancel' : 'Add team'}
-                </Button>
+                <div className="panel-header-actions">
+                  <Button onClick={() => setShowImportPanel((v) => !v)}>
+                    {showImportPanel ? 'Hide import' : 'Import rosters from Yahoo'}
+                  </Button>
+                  <Button variant="primary" onClick={() => setShowAddForm((v) => !v)}>
+                    {showAddForm ? 'Cancel' : 'Add team'}
+                  </Button>
+                </div>
               )}
             </div>
+
+            {isManual && showImportPanel && (
+              <ImportRosterPanel
+                leagueKey={leagueKey}
+                onImported={handleRosterImported}
+                onClose={() => setShowImportPanel(false)}
+              />
+            )}
 
             {showAddForm && (
               <form className="inline-form" onSubmit={handleAddTeam}>
@@ -300,6 +321,7 @@ export function LeagueDetailPage() {
           <Card>
             {selectedTeam ? (
               <RosterEditor
+                key={`${selectedTeam.id}:${rosterRefreshKey}`}
                 leagueKey={leagueKey}
                 teamId={selectedTeam.id}
                 teamName={selectedTeam.name}
