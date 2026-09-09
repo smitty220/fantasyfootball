@@ -3,6 +3,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 import app.models  # noqa: F401  (register models with Base before migrating)
 from app.middleware import SessionAuthMiddleware
@@ -32,8 +33,14 @@ class SPAStaticFiles(StaticFiles):
     """
 
     async def get_response(self, path: str, scope):
-        response = await super().get_response(path, scope)
-        if response.status_code == 404:
+        try:
+            response = await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            # Unknown /api paths must stay real 404s for API consumers.
+            if exc.status_code != 404 or scope.get("path", "").startswith("/api"):
+                raise
+            return await super().get_response("index.html", scope)
+        if response.status_code == 404 and not scope.get("path", "").startswith("/api"):
             response = await super().get_response("index.html", scope)
         return response
 
