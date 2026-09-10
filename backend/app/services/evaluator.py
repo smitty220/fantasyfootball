@@ -209,10 +209,23 @@ def _selected_sources(sources: Sequence[str] | None) -> tuple[str, ...]:
     return tuple(sources) if sources else SOURCE_PRIORITY
 
 
+def _row_remaining_only(row: Projection) -> bool:
+    """True when this row's stats already describe only the remaining season.
+
+    FantasyPros' ``ros=true`` mode publishes expert rest-of-season projections;
+    the ingester marks such rows with a ``"_remaining_only"`` flag inside
+    ``stat_json`` (an underscore-prefixed meta key, never a canonical stat, and
+    worth 0 points to the scoring engine). Marked rows must NOT be
+    schedule-scaled -- their calendar is already baked in.
+    """
+    return bool((row.stat_json or {}).get("_remaining_only"))
+
+
 def _blend_points(
     rows: Iterable[Projection],
     rules: scoring.ScoringRules,
     sources: Sequence[str] | None,
+    scale: float = 1.0,
 ) -> float:
     """League points for one player from ``rows`` (all the same horizon).
 
@@ -230,13 +243,24 @@ def _blend_points(
     the same thing -- and would silently drop any stat a source omits. Points
     are the one quantity every source's line reduces to under the same rules,
     which makes them the comparable unit.
+
+    ``scale`` is the schedule factor for season-horizon rows (remaining games /
+    17). It is applied PER ROW, because rows marked remaining-only
+    (:func:`_row_remaining_only`) already describe just the rest of the season
+    and must not be shrunk again. Weekly callers leave it at 1.0.
     """
+
+    def row_points(row: Projection) -> float:
+        pts = league_points(row, rules)
+        return pts if _row_remaining_only(row) else pts * scale
+
     if not sources:
-        return league_points(_pick_best(rows), rules)
+        best = _pick_best(rows)
+        return row_points(best) if best is not None else 0.0
 
     by_source = {row.source: row for row in rows}
     scored = [
-        league_points(by_source[source], rules)
+        row_points(by_source[source])
         for source in sources
         if source in by_source
     ]
@@ -346,6 +370,41 @@ def _scale_to_schedule(
     return scaled
 
 
+def _player_scales(
+    db: Session,
+    season: int,
+    sources: Sequence[str] | None,
+    player_ids: Iterable[int],
+    teams: Mapping[int, str | None] | None = None,
+) -> dict[int, float]:
+    """Per-player schedule factor (remaining games / 17) for season rows.
+
+    Empty dict when there is nothing to scale by (no schedule on file); a
+    player we cannot place on a scheduled team is simply absent, and callers
+    default the factor to 1.0.
+    """
+    ids = list(player_ids)
+    if not ids:
+        return {}
+    scale = _schedule_scale(db, season, sources)
+    if scale is None:
+        return {}
+    if teams is None:
+        teams = {
+            player_id: team
+            for player_id, team in db.query(Player.id, Player.nfl_team).filter(
+                Player.id.in_(ids)
+            )
+        }
+    normalize_team = _nfl_schedule().normalize_team
+    out: dict[int, float] = {}
+    for player_id in ids:
+        factor = scale.get(normalize_team(teams.get(player_id)))
+        if factor is not None:
+            out[player_id] = factor
+    return out
+
+
 def _projection_points(
     db: Session,
     season: int,
@@ -383,13 +442,17 @@ def _projection_points(
     for row in query.all():
         grouped.setdefault(row.player_id, []).append(row)
 
-    points = {
-        player_id: _blend_points(rows, rules, sources)
+    if week is not None:
+        return {
+            player_id: _blend_points(rows, rules, sources)
+            for player_id, rows in grouped.items()
+        }
+
+    scales = _player_scales(db, season, sources, grouped.keys())
+    return {
+        player_id: _blend_points(rows, rules, sources, scale=scales.get(player_id, 1.0))
         for player_id, rows in grouped.items()
     }
-    if week is not None:
-        return points
-    return _scale_to_schedule(db, season, points, sources)
 
 
 def projection_sources(db: Session, season: int) -> dict:
@@ -545,16 +608,13 @@ def replacement_levels(
         projections.append(projection)
         teams[player.id] = player.nfl_team
 
-    scored = _scale_to_schedule(
-        db,
-        season,
-        {
-            player_id: _blend_points(projections, rules, sources)
-            for player_id, (_position, projections) in grouped.items()
-        },
-        sources,
-        teams,
-    )
+    scales = _player_scales(db, season, sources, grouped.keys(), teams)
+    scored = {
+        player_id: _blend_points(
+            projections, rules, sources, scale=scales.get(player_id, 1.0)
+        )
+        for player_id, (_position, projections) in grouped.items()
+    }
 
     for player_id, (position, _projections) in grouped.items():
         if position not in pools:

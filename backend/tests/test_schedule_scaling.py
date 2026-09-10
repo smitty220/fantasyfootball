@@ -286,3 +286,41 @@ def test_no_current_week_means_no_opponent(bye_league, db_session):
     assert rows["Resting RB"]["on_bye"] is False
     # The bye week itself still comes off the player row.
     assert rows["Resting RB"]["bye_week"] == 1
+
+
+def test_remaining_only_rows_are_never_rescaled(db_session):
+    """A FantasyPros ros=true row already spans only the remaining games."""
+    from app.models import Projection
+    from datetime import datetime, timezone
+
+    league = make_league(db_session, roster_slots=SMALL_SLOTS)
+    player = make_player(db_session, "ROS Row Guy", "RB", nfl_team="SF")
+    # Marked FP row worth 100 pts; unmarked ESPN row worth 100 pts.
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    db_session.add(Projection(player_id=player.id, source="fantasypros",
+                              season=SEASON, week=None,
+                              stat_json={"rush_yds": 1000, "_remaining_only": True},
+                              fetched_at=now))
+    db_session.add(Projection(player_id=player.id, source="espn",
+                              season=SEASON, week=None,
+                              stat_json={"rush_yds": 1000}, fetched_at=now))
+    # SF has 8 of 17 games left.
+    give_games(db_session, "SF", range(1, 9))
+    db_session.commit()
+
+    rules = scoring.get_preset("half_ppr")
+    # FP alone: unscaled (already remaining-only).
+    fp = evaluator._projection_points(
+        db_session, SEASON, rules, [player.id], sources=("fantasypros",)
+    )[player.id]
+    assert fp == pytest.approx(100.0)
+    # ESPN alone: scaled to 8/17.
+    espn = evaluator._projection_points(
+        db_session, SEASON, rules, [player.id], sources=("espn",)
+    )[player.id]
+    assert espn == pytest.approx(100.0 * 8 / FULL)
+    # Blend: average of the two, each treated per its own horizon.
+    both = evaluator._projection_points(
+        db_session, SEASON, rules, [player.id], sources=("fantasypros", "espn")
+    )[player.id]
+    assert both == pytest.approx((100.0 + 100.0 * 8 / FULL) / 2)

@@ -56,6 +56,11 @@ def _player(fpid: int, name: str, position_id: str, stats: dict) -> dict:
 
 def _mock_all_positions(empty_positions: set[str] | None = None, **by_position):
     empty_positions = empty_positions or set()
+    # The season refresh probes ros=true first; answer "not published" so
+    # these tests exercise the historical week=0 path.
+    respx.get(_url(), params={"position": "QB", "ros": "true"}).mock(
+        return_value=httpx.Response(200, json={"players": None, "count": "0"})
+    )
     for position in fantasypros.POSITIONS:
         players = by_position.get(position, [])
         respx.get(_url(), params={"position": position, "week": "0"}).mock(
@@ -241,3 +246,72 @@ def test_refresh_projections_week_param_and_upsert_idempotent(db_session, fp_key
     all_rows = db_session.query(Projection).filter(Projection.source == "fantasypros").all()
     assert len(all_rows) == 2
     assert {r.week for r in all_rows} == {5, None}
+
+
+@respx.mock
+def test_season_refresh_uses_ros_mode_when_published(db_session, fp_key):
+    """When ros=true has data, all rows are fetched in ROS mode and marked."""
+    from app.models import Player as P
+
+    player = P(full_name="Josh Allen", position="QB", fantasypros_id="17298")
+    db_session.add(player)
+    db_session.commit()
+
+    def responder(request):
+        if "ros=true" in str(request.url):
+            payload = _payload(
+                "QB",
+                [{"fpid": "17298", "name": "Josh Allen", "position_id": "QB",
+                  "stats": {"pass_yds": 3000.0, "pass_tds": 20.0}}],
+            )
+        else:
+            payload = _payload("NONE", [])
+        return httpx.Response(200, json=payload)
+
+    respx.get(_url()).mock(side_effect=responder)
+
+    fantasypros.refresh_projections(db_session, SEASON)
+
+    row = (
+        db_session.query(Projection)
+        .filter(Projection.player_id == player.id, Projection.week.is_(None))
+        .one()
+    )
+    assert row.stat_json.get("_remaining_only") is True
+    assert row.stat_json["pass_yds"] == 3000.0
+
+    log = db_session.query(SyncLog).order_by(SyncLog.id.desc()).first()
+    assert "expert rest-of-season" in (log.message or "")
+
+
+@respx.mock
+def test_season_refresh_falls_back_when_ros_is_empty(db_session, fp_key):
+    from app.models import Player as P
+
+    player = P(full_name="Josh Allen", position="QB", fantasypros_id="17298")
+    db_session.add(player)
+    db_session.commit()
+
+    def responder(request):
+        url = str(request.url)
+        if "ros=true" in url:
+            return httpx.Response(200, json={"players": None, "count": "0"})
+        payload = _payload(
+            "QB",
+            [{"fpid": "17298", "name": "Josh Allen", "position_id": "QB",
+              "stats": {"pass_yds": 3889.0, "pass_tds": 26.8}}],
+        ) if "position=QB" in url else _payload("NONE", [])
+        return httpx.Response(200, json=payload)
+
+    respx.get(_url()).mock(side_effect=responder)
+
+    fantasypros.refresh_projections(db_session, SEASON)
+
+    row = (
+        db_session.query(Projection)
+        .filter(Projection.player_id == player.id, Projection.week.is_(None))
+        .one()
+    )
+    assert "_remaining_only" not in row.stat_json
+    log = db_session.query(SyncLog).order_by(SyncLog.id.desc()).first()
+    assert "not yet published" in (log.message or "")

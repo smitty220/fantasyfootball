@@ -239,12 +239,19 @@ RATE_LIMIT_FALLBACK_WAIT = 15.0
 
 
 def _fetch_position(
-    client: httpx.Client, season: int, position: str, week: int | None
+    client: httpx.Client,
+    season: int,
+    position: str,
+    week: int | None,
+    ros: bool = False,
 ) -> list[dict]:
     params: dict[str, Any] = {"position": position}
-    # ASSUMPTION: week=None -> week=0 ("preseason"/full-season total) rather
-    # than ros=true -- see module docstring.
-    params["week"] = week if week is not None else 0
+    if ros:
+        # FantasyPros' expert rest-of-season mode (news-aware, remaining games
+        # only). Probed per refresh; empty until FP publishes it in-season.
+        params["ros"] = "true"
+    else:
+        params["week"] = week if week is not None else 0
 
     for attempt in range(RATE_LIMIT_RETRIES + 1):
         response = client.get(f"{BASE_URL}/nfl/{season}/projections", params=params)
@@ -263,6 +270,19 @@ def _fetch_position(
         response.raise_for_status()
         return response.json().get("players") or []
     raise RuntimeError("unreachable")  # pragma: no cover
+
+
+def _season_fetch_mode(client: httpx.Client, season: int) -> bool:
+    """True when FantasyPros' ``ros=true`` mode has data for this season.
+
+    Probed once per season refresh with a single QB request. Empty (as before
+    the season's first results exist, or if the key's tier lacks it) means we
+    fall back to the ``week=0`` full-season totals, exactly as before.
+    """
+    try:
+        return bool(_fetch_position(client, season, "QB", None, ros=True))
+    except httpx.HTTPStatusError:
+        return False
 
 
 def refresh_projections(db: Session, season: int, week: int | None = None) -> dict:
@@ -297,10 +317,14 @@ def refresh_projections(db: Session, season: int, week: int | None = None) -> di
         with httpx.Client(
             timeout=15.0, headers={"x-api-key": settings.FANTASYPROS_API_KEY}
         ) as client:
+            ros_mode = False
+            if week is None:
+                ros_mode = _season_fetch_mode(client, season)
+                time.sleep(REQUEST_PACING_SECONDS)  # the probe counts for pacing
             for index, position in enumerate(POSITIONS):
                 if index:
                     time.sleep(REQUEST_PACING_SECONDS)
-                players = _fetch_position(client, season, position, week)
+                players = _fetch_position(client, season, position, week, ros=ros_mode)
                 per_position[position] = len(players)
 
                 for entry in players:
@@ -322,6 +346,11 @@ def refresh_projections(db: Session, season: int, week: int | None = None) -> di
                     if not stat_json:
                         no_projection += 1
                         continue
+                    if ros_mode:
+                        # Meta flag (not a canonical stat, scores 0): tells the
+                        # evaluator this row is already remaining-season-only,
+                        # so schedule scaling must skip it.
+                        stat_json["_remaining_only"] = True
 
                     player, by_id = _match_player(db, fp_id, full_name, entry_position)
                     if player is None:
@@ -337,7 +366,14 @@ def refresh_projections(db: Session, season: int, week: int | None = None) -> di
 
                 db.commit()
 
-        week_label = "ROS/season" if week is None else f"week {week}"
+        if week is None:
+            week_label = (
+                "ROS (expert rest-of-season mode)"
+                if ros_mode
+                else "season totals (ROS mode not yet published)"
+            )
+        else:
+            week_label = f"week {week}"
         log.message = (
             f"season {season} {week_label}: {saved} projection(s) saved across "
             f"positions {per_position} ({matched_by_id} by fantasypros_id, "
