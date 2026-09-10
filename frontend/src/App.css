@@ -1466,6 +1466,80 @@ a.tab {
   text-align: center;
 }
 
+/* Accuracy page */
+.accuracy-scoreboard {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.accuracy-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.accuracy-card-best {
+  border-color: var(--success);
+  box-shadow: 0 0 0 1px var(--success);
+}
+
+.accuracy-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.accuracy-card-header h2 {
+  margin: 0;
+}
+
+.accuracy-card-mae {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.accuracy-card-mae strong {
+  font-size: 32px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-h);
+}
+
+.accuracy-bias {
+  margin: 0;
+  font-size: 13px;
+}
+
+.accuracy-bias-warning {
+  color: var(--warning);
+  font-weight: 600;
+}
+
+.accuracy-bias-muted {
+  color: var(--text);
+}
+
+.accuracy-card-n {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text);
+  opacity: 0.8;
+}
+
+.accuracy-cell-best {
+  color: var(--success);
+  font-weight: 700;
+}
+
+.accuracy-n-cell {
+  font-size: 12px;
+  color: var(--text);
+  opacity: 0.8;
+  white-space: nowrap;
+}
+
 /* Source picker */
 .source-picker {
   display: flex;

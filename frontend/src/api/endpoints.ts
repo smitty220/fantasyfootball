@@ -12,6 +12,7 @@ import type {
   HealthResponse,
   ImportRosterPasteResponse,
   League,
+  LeagueAccuracyResponse,
   LeagueDetail,
   LineupAssignment,
   PlayerSearchResult,
@@ -163,4 +164,8 @@ export function getDataSchedule(): Promise<DataScheduleRow[]> {
 
 export function getProjectionSources(): Promise<ProjectionSourcesResponse> {
   return apiGet('/api/projections/sources')
+}
+
+export function getLeagueAccuracy(leagueKey: string): Promise<LeagueAccuracyResponse> {
+  return apiGet(`/api/leagues/${encodeURIComponent(leagueKey)}/accuracy`)
 }

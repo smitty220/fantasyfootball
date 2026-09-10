@@ -354,3 +354,31 @@ export interface HealthResponse {
   status: string
   version: string
 }
+
+export interface AccuracyStat {
+  n: number
+  mae: number
+  bias: number
+}
+
+export interface AccuracyByWeek extends AccuracyStat {
+  week: number
+}
+
+export interface AccuracyByPosition extends AccuracyStat {
+  position: string
+}
+
+export interface AccuracySource {
+  source: ProjectionSourceId
+  overall: AccuracyStat
+  by_week: AccuracyByWeek[]
+  by_position: AccuracyByPosition[]
+}
+
+export interface LeagueAccuracyResponse {
+  league_key: string
+  season: number
+  weeks: number[]
+  sources: AccuracySource[]
+}

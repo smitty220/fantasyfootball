@@ -2,17 +2,9 @@ import { useEffect, useState } from 'react'
 import { parseApiDate } from '../api/dates'
 import { getProjectionSources } from '../api/endpoints'
 import type { ProjectionSourceId, ProjectionSourceInfo } from '../api/types'
+import { sourceLabel } from '../sourceLabels'
 
 const STORAGE_KEY = 'projection_sources'
-
-const SOURCE_LABELS: Record<ProjectionSourceId, string> = {
-  fantasypros: 'FantasyPros (expert consensus)',
-  espn: 'ESPN',
-}
-
-function sourceLabel(id: string): string {
-  return SOURCE_LABELS[id as ProjectionSourceId] || id
-}
 
 function relativeTime(iso: string | null): string {
   const date = parseApiDate(iso)
