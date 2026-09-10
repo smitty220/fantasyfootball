@@ -202,6 +202,9 @@ export function LeagueDetailPage() {
         <Link to={`/leagues/${encodeURIComponent(leagueKey)}/matchup`} className="tab">
           Matchup preview
         </Link>
+        <Link to={`/leagues/${encodeURIComponent(leagueKey)}/standings`} className="tab">
+          Standings &amp; Odds
+        </Link>
         <Link to={`/leagues/${encodeURIComponent(leagueKey)}/accuracy`} className="tab">
           Accuracy
         </Link>

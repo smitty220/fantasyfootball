@@ -383,3 +383,65 @@ export interface LeagueAccuracyResponse {
   weeks: number[]
   sources: AccuracySource[]
 }
+
+export interface StandingsRow {
+  team_id: number
+  name: string
+  is_my_team: boolean
+  wins: number
+  losses: number
+  ties: number
+  points_for: number
+  points_against: number
+  games_played: number
+}
+
+export interface PlayoffOddsCurrent {
+  wins: number
+  losses: number
+  ties: number
+  points_for: number
+}
+
+export interface PlayoffOddsTeam {
+  team_id: number
+  name: string
+  is_my_team: boolean
+  current: PlayoffOddsCurrent
+  playoff_prob: number
+  avg_seed: number
+  seed_1_prob: number
+}
+
+export interface PlayoffOddsResponse {
+  sims: number
+  regular_season_weeks: number
+  playoff_teams: number
+  completed_weeks: number[]
+  teams: PlayoffOddsTeam[]
+}
+
+export type ManualMatchupStatus = string
+
+export interface ManualMatchup {
+  id: number
+  week: number
+  home_team_id: number
+  away_team_id: number
+  home_points: number | null
+  away_points: number | null
+  status: ManualMatchupStatus
+  home_team_name: string
+  away_team_name: string
+}
+
+export interface ManualMatchupInput {
+  home_team_id: number
+  away_team_id: number
+  home_points: number | null
+  away_points: number | null
+}
+
+export interface PutManualMatchupsPayload {
+  matchups: ManualMatchupInput[]
+}

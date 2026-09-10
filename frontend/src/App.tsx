@@ -8,6 +8,7 @@ import { LeagueDetailPage } from './pages/LeagueDetailPage'
 import { TradeAnalyzerPage } from './pages/TradeAnalyzerPage'
 import { MatchupPage } from './pages/MatchupPage'
 import { AccuracyPage } from './pages/AccuracyPage'
+import { StandingsPage } from './pages/StandingsPage'
 import { DataPage } from './pages/DataPage'
 import { useSession } from './components/sessionContext'
 import { Badge } from './components/ui'
@@ -56,6 +57,7 @@ function App() {
           <Route path="/leagues/:leagueKey" element={<LeagueDetailPage />} />
           <Route path="/leagues/:leagueKey/trade" element={<TradeAnalyzerPage />} />
           <Route path="/leagues/:leagueKey/matchup" element={<MatchupPage />} />
+          <Route path="/leagues/:leagueKey/standings" element={<StandingsPage />} />
           <Route path="/leagues/:leagueKey/accuracy" element={<AccuracyPage />} />
           <Route path="/data" element={<DataPage />} />
         </Routes>

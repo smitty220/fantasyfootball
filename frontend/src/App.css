@@ -1719,3 +1719,74 @@ a.tab {
   color: var(--warning);
   font-weight: 600;
 }
+
+/* Standings & odds page */
+.standings-row-mine {
+  background: var(--accent-bg);
+}
+
+.standings-row-mine td {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.standings-star {
+  color: var(--warning);
+  margin-right: 6px;
+}
+
+.odds-table td {
+  vertical-align: middle;
+}
+
+.odds-bar-cell {
+  padding: 4px 8px;
+  border-radius: 5px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.standings-week-field {
+  margin-bottom: 0;
+}
+
+.standings-actions {
+  margin-top: 12px;
+}
+
+.matchup-edit-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.matchup-edit-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 84px auto 84px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+@media (max-width: 640px) {
+  .matchup-edit-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.matchup-edit-score {
+  text-align: center;
+}
+
+.matchup-edit-vs {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  text-align: center;
+}
+
+.matchup-edit-remove {
+  padding: 2px 8px;
+  font-size: 13px;
+  line-height: 1.2;
+}

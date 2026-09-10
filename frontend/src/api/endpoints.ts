@@ -15,11 +15,15 @@ import type {
   LeagueAccuracyResponse,
   LeagueDetail,
   LineupAssignment,
+  ManualMatchup,
   PlayerSearchResult,
+  PlayoffOddsResponse,
   ProjectionSourcesResponse,
+  PutManualMatchupsPayload,
   RosterPlayer,
   SessionLoginResponse,
   SessionMe,
+  StandingsRow,
   Team,
   TeamLineupResponse,
   TradeEvaluatePayload,
@@ -168,4 +172,32 @@ export function getProjectionSources(): Promise<ProjectionSourcesResponse> {
 
 export function getLeagueAccuracy(leagueKey: string): Promise<LeagueAccuracyResponse> {
   return apiGet(`/api/leagues/${encodeURIComponent(leagueKey)}/accuracy`)
+}
+
+export function getStandings(leagueKey: string): Promise<StandingsRow[]> {
+  return apiGet(`/api/leagues/${encodeURIComponent(leagueKey)}/standings`)
+}
+
+export function getPlayoffOdds(leagueKey: string, sources?: string[]): Promise<PlayoffOddsResponse> {
+  return apiGet(
+    `/api/leagues/${encodeURIComponent(leagueKey)}/playoff-odds${buildQuery({
+      sources: sources && sources.length > 0 ? sources.join(',') : undefined,
+    })}`,
+  )
+}
+
+export function getManualMatchups(leagueKey: string, week: number): Promise<ManualMatchup[]> {
+  return apiGet(`/api/manual/leagues/${encodeURIComponent(leagueKey)}/matchups${buildQuery({ week })}`)
+}
+
+export function putManualMatchups(
+  leagueKey: string,
+  week: number,
+  payload: PutManualMatchupsPayload,
+): Promise<ManualMatchup[]> {
+  return apiPut(`/api/manual/leagues/${encodeURIComponent(leagueKey)}/matchups/${week}`, payload)
+}
+
+export function deleteManualMatchups(leagueKey: string, week: number): Promise<void> {
+  return apiDelete(`/api/manual/leagues/${encodeURIComponent(leagueKey)}/matchups/${week}`)
 }
