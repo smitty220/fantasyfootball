@@ -865,6 +865,35 @@ def _free_agent_best_week_points(
     return best
 
 
+def _free_agent_best_ros_points(
+    db: Session,
+    league: League,
+    season: int,
+    sources: Sequence[str] | None = None,
+) -> dict[str, float]:
+    """The best rest-of-season points among the league's free agents, per
+    position -- the season-horizon sibling of
+    :func:`_free_agent_best_week_points`, with the same pool, blend and
+    two-query cost profile."""
+    players = _free_agent_players(db, league, STARTABLE_POSITIONS)
+    if not players:
+        return {}
+    positions = {player.id: player.position for player in players}
+    rules = scoring.league_rules(league.settings_json)
+    ros_points = _projection_points(
+        db, season, rules, list(positions), sources=sources
+    )
+
+    best: dict[str, float] = {}
+    for player_id, points in ros_points.items():
+        position = positions.get(player_id)
+        if position is None:
+            continue
+        if position not in best or points > best[position]:
+            best[position] = points
+    return best
+
+
 def evaluate_free_agents(
     db: Session,
     league: League,
@@ -1045,6 +1074,7 @@ def team_lineup(
     week = current_projection_week(db, season, sources)
     roster = _team_roster(db, league, team_id, season, week, sources)
     fa_best_week = _free_agent_best_week_points(db, league, season, week, sources)
+    fa_best_ros = _free_agent_best_ros_points(db, league, season, sources)
 
     players = {
         player.id: player
@@ -1062,6 +1092,13 @@ def team_lineup(
             and (own_week_points is None or fa_week_points > own_week_points)
             else None
         )
+        own_ros_points = roster.ros_points.get(pid, 0.0)
+        fa_ros_points = fa_best_ros.get(position) if position else None
+        better_fa_ros_points = (
+            round(fa_ros_points, 2)
+            if fa_ros_points is not None and fa_ros_points > own_ros_points
+            else None
+        )
         return {
             "player_id": pid,
             "full_name": player.full_name if player else f"player {pid}",
@@ -1073,6 +1110,7 @@ def team_lineup(
             "percent_owned": player.percent_owned if player else None,
             "percent_started": player.percent_started if player else None,
             "better_fa_week_points": better_fa_week_points,
+            "better_fa_ros_points": better_fa_ros_points,
         }
 
     queues: dict[str, list[int]] = {}

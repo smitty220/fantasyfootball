@@ -938,6 +938,7 @@ def test_team_lineup_fills_every_slot_and_benches_the_rest(
             "percent_owned": None,
             "percent_started": None,
             "better_fa_week_points": None,
+            "better_fa_ros_points": None,
         },
     }
     assert "slot" not in lineup["bench"][0]

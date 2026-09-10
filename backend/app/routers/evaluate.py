@@ -77,6 +77,8 @@ class LineupPlayer(BaseModel):
     percent_started: float | None = None
     #: Best same-position free agent's week points, when it beats this player's.
     better_fa_week_points: float | None = None
+    #: Same, for rest-of-season points.
+    better_fa_ros_points: float | None = None
 
 
 class LineupSlot(BaseModel):
