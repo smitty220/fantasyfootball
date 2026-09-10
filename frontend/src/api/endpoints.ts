@@ -28,6 +28,7 @@ import type {
   TeamLineupResponse,
   TradeEvaluatePayload,
   TradeEvaluateResponse,
+  TradeFinderResponse,
   UpdateManualLeaguePayload,
   UpdateTeamPayload,
   YahooStatus,
@@ -152,6 +153,19 @@ export function clearLineup(teamId: number): Promise<void> {
 
 export function evaluateTrade(leagueKey: string, payload: TradeEvaluatePayload): Promise<TradeEvaluateResponse> {
   return apiPost(`/api/leagues/${encodeURIComponent(leagueKey)}/evaluate/trade`, payload)
+}
+
+export function getTradeFinder(
+  leagueKey: string,
+  sources?: string[],
+  limit?: number,
+): Promise<TradeFinderResponse> {
+  return apiGet(
+    `/api/leagues/${encodeURIComponent(leagueKey)}/evaluate/trade-finder${buildQuery({
+      sources: sources && sources.length > 0 ? sources.join(',') : undefined,
+      limit,
+    })}`,
+  )
 }
 
 export function refreshDataSource(source: DataSourceId): Promise<DataRefreshResult> {

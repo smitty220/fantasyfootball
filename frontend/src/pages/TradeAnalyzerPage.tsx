@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { evaluateTrade, getRoster, getTeams } from '../api/endpoints'
-import type { RosterPlayer, Team, TradeEvaluateResponse, TradeSideResult } from '../api/types'
+import { evaluateTrade, getRoster, getTeams, getTradeFinder } from '../api/endpoints'
+import type {
+  RosterPlayer,
+  Team,
+  TradeEvaluateResponse,
+  TradeFinderResponse,
+  TradeFinderSuggestion,
+  TradeSideResult,
+} from '../api/types'
 import { ApiError } from '../api/client'
 import { Badge, Button, Card, EmptyState, InlineError, Spinner } from '../components/ui'
 import { useToast } from '../components/toastContext'
@@ -131,6 +138,42 @@ function TradeSideResultCard({ label, side }: { label: string; side: TradeSideRe
   )
 }
 
+function formatPlayerList(players: { full_name: string; position: string }[]): string {
+  return players.map((p) => `${p.full_name} (${p.position})`).join(', ')
+}
+
+function TradeFinderRow({
+  suggestion,
+  onLoad,
+}: {
+  suggestion: TradeFinderSuggestion
+  onLoad: (suggestion: TradeFinderSuggestion) => void
+}) {
+  const { opponent, sends, receives, my_lineup_delta, opp_lineup_delta, value_margin_pct } = suggestion
+  return (
+    <li className="trade-finder-row">
+      <div className="trade-finder-row-header">with {opponent.name}</div>
+      <div className="trade-finder-row-body">
+        You send: <strong>{formatPlayerList(sends)}</strong> → You receive:{' '}
+        <strong>{formatPlayerList(receives)}</strong>
+      </div>
+      <div className="trade-finder-row-footer">
+        <div className="badge-row">
+          <Badge tone="success">
+            +{formatNum(my_lineup_delta)} you
+          </Badge>
+          <Badge tone="neutral">
+            {opp_lineup_delta >= 0 ? '+' : ''}
+            {formatNum(opp_lineup_delta)} them
+          </Badge>
+          <Badge tone="neutral">margin {formatNum(value_margin_pct)}%</Badge>
+        </div>
+        <Button onClick={() => onLoad(suggestion)}>Load in analyzer</Button>
+      </div>
+    </li>
+  )
+}
+
 export function TradeAnalyzerPage() {
   const { leagueKey = '' } = useParams<{ leagueKey: string }>()
   const { showError } = useToast()
@@ -150,11 +193,22 @@ export function TradeAnalyzerPage() {
   const [sources, setSources] = useState<string[]>([])
   const sourcesInitialized = useRef(false)
 
+  const [finderLoading, setFinderLoading] = useState(false)
+  const [finderResult, setFinderResult] = useState<TradeFinderResponse | null>(null)
+  const [finderError, setFinderError] = useState<string | null>(null)
+  // Player-id sets to apply to the manual builder once the corresponding
+  // roster finishes (re)loading after "Load in analyzer" switches teams.
+  const [pendingSelectA, setPendingSelectA] = useState<Set<string> | null>(null)
+  const [pendingSelectB, setPendingSelectB] = useState<Set<string> | null>(null)
+  const builderRef = useRef<HTMLDivElement>(null)
+
   function handleSourcesChange(next: string[]) {
     setSources(next)
     if (sourcesInitialized.current) {
       setResult(null)
       setEvalError(null)
+      setFinderResult(null)
+      setFinderError(null)
     }
     sourcesInitialized.current = true
   }
@@ -227,6 +281,26 @@ export function TradeAnalyzerPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [teamBId])
 
+  // Applies a "Load in analyzer" selection once the roster it targets has
+  // (re)loaded — the team-switch effects above reset the checkbox selection
+  // to empty as soon as the team changes, so this has to run after that
+  // settles rather than alongside it.
+  useEffect(() => {
+    if (pendingSelectA && rosterA !== null && !rosterALoading) {
+      setSelectedA(pendingSelectA)
+      setPendingSelectA(null)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rosterA, rosterALoading, pendingSelectA])
+
+  useEffect(() => {
+    if (pendingSelectB && rosterB !== null && !rosterBLoading) {
+      setSelectedB(pendingSelectB)
+      setPendingSelectB(null)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rosterB, rosterBLoading, pendingSelectB])
+
   function toggleA(playerId: string) {
     setSelectedA((prev) => {
       const next = new Set(prev)
@@ -275,6 +349,35 @@ export function TradeAnalyzerPage() {
     }
   }
 
+  async function handleFindTrades() {
+    setFinderLoading(true)
+    setFinderError(null)
+    try {
+      const res = await getTradeFinder(leagueKey, sources.length > 0 ? sources : undefined)
+      setFinderResult(res)
+    } catch (err) {
+      setFinderResult(null)
+      if (err instanceof ApiError && err.status === 409) {
+        setFinderError('Star your team first to use the trade finder.')
+      } else {
+        setFinderError(err instanceof ApiError ? err.message : 'Failed to find trades')
+      }
+    } finally {
+      setFinderLoading(false)
+    }
+  }
+
+  function handleLoadInAnalyzer(suggestion: TradeFinderSuggestion) {
+    if (!finderResult) return
+    setResult(null)
+    setEvalError(null)
+    setPendingSelectA(new Set(suggestion.sends.map((p) => String(p.player_id))))
+    setPendingSelectB(new Set(suggestion.receives.map((p) => String(p.player_id))))
+    setTeamAId(finderResult.my_team.id)
+    setTeamBId(suggestion.opponent.team_id)
+    builderRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
   if (teams === null) {
     return (
       <div className="page loading-row">
@@ -305,7 +408,33 @@ export function TradeAnalyzerPage() {
 
       <SourcePicker onChange={handleSourcesChange} />
 
-      <div className="trade-grid">
+      <Card className="trade-finder-card">
+        <div className="panel-header">
+          <h2>Trade finder</h2>
+        </div>
+        <p className="field-hint">Scans every roster for fair trades that improve your starting lineup</p>
+        <div className="trade-actions">
+          <Button variant="primary" busy={finderLoading} onClick={handleFindTrades}>
+            Find trades
+          </Button>
+        </div>
+
+        {finderError && <InlineError>{finderError}</InlineError>}
+
+        {finderResult && finderResult.suggestions.length === 0 && !finderError && (
+          <EmptyState>No fair lineup-improving trades found right now — check back after rosters change.</EmptyState>
+        )}
+
+        {finderResult && finderResult.suggestions.length > 0 && (
+          <ul className="trade-finder-list">
+            {finderResult.suggestions.map((s, i) => (
+              <TradeFinderRow key={i} suggestion={s} onLoad={handleLoadInAnalyzer} />
+            ))}
+          </ul>
+        )}
+      </Card>
+
+      <div className="trade-grid" ref={builderRef}>
         <TeamSidePicker
           label="Side A sends"
           teams={teams}

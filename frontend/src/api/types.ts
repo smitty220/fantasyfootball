@@ -231,6 +231,41 @@ export interface TradeEvaluateResponse {
   notes: string[]
 }
 
+export interface TradeFinderPlayer {
+  player_id: number
+  full_name: string
+  position: string
+  ros_points: number
+  value: number
+}
+
+export interface TradeFinderOpponent {
+  team_id: number
+  name: string
+}
+
+export type TradeFinderKind = '1for1' | '2for1' | '1for2'
+
+export interface TradeFinderSuggestion {
+  opponent: TradeFinderOpponent
+  sends: TradeFinderPlayer[]
+  receives: TradeFinderPlayer[]
+  my_lineup_delta: number
+  opp_lineup_delta: number
+  value_margin_pct: number
+  kind: TradeFinderKind
+}
+
+export interface TradeFinderMyTeam {
+  id: number
+  name: string
+}
+
+export interface TradeFinderResponse {
+  my_team: TradeFinderMyTeam
+  suggestions: TradeFinderSuggestion[]
+}
+
 export type DataSourceId =
   | 'crosswalk'
   | 'sleeper_players'

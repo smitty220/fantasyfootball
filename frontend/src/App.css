@@ -1373,6 +1373,51 @@ a.tab {
   gap: 4px;
 }
 
+.trade-finder-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.trade-finder-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.trade-finder-row {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.trade-finder-row-header {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.trade-finder-row-body {
+  font-size: 14px;
+  color: var(--text-h);
+}
+
+.trade-finder-row-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 /* Matchup preview */
 .matchup-table {
   table-layout: fixed;
