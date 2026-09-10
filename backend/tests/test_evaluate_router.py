@@ -55,6 +55,36 @@ def test_free_agents_endpoint_returns_ranked_rows(client, seeded):
     assert hot["has_projection"] is True
 
 
+def test_endpoints_serialize_the_schedule_fields(client, seeded, db_session):
+    """The response models carry bye/opponent/on_bye on every player row.
+
+    Seeded with a week-1 game for SF (every ``make_player`` default) and a
+    bye_week on one player, so the fields have something real to report.
+    """
+    from app.models import NflGame
+
+    league, seed = seeded
+    db_session.add(NflGame(season=SEASON, week=1, home_team="SEA", away_team="SF"))
+    seed["a_star"].bye_week = 9
+    set_week_points(db_session, seed["a_star"], 15.0, week=1)
+    db_session.commit()
+
+    team_id = seed["team_a"].id
+    lineup = client.get(
+        f"/api/leagues/manual.1/evaluate/teams/{team_id}/lineup"
+    ).json()
+    starter = next(slot["player"] for slot in lineup["slots"] if slot["player"])
+    assert starter["opponent"] == "@ SEA"
+    assert starter["on_bye"] is False
+
+    body = client.get("/api/leagues/manual.1/evaluate/free-agents").json()
+    for row in body["rows"] + body["my_players"]:
+        assert set(row) >= {"bye_week", "opponent", "on_bye"}
+    mine = {row["full_name"]: row for row in body["my_players"]}
+    assert mine["A Star RB"]["bye_week"] == 9
+    assert mine["A Star RB"]["opponent"] == "@ SEA"
+
+
 def test_free_agents_endpoint_position_filter_and_limit(client, seeded):
     body = client.get(
         "/api/leagues/manual.1/evaluate/free-agents?position=wr"

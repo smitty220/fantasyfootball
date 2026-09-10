@@ -27,7 +27,25 @@ SOURCES_DESCRIPTION = (
 # --- schemas ---------------------------------------------------------------
 
 
-class FreeAgentRow(BaseModel):
+class ScheduleFields(BaseModel):
+    """NFL-schedule context every player row carries.
+
+    All three read as "unknown" rather than "no" when we have no schedule for
+    the response's week: null ``opponent`` and ``on_bye`` false. ``bye_week``
+    comes off the player row (kept current by
+    ``app.services.nfl_schedule.refresh_bye_weeks``), the other two from this
+    week's games.
+    """
+
+    #: The player's team's bye week this season; null until the schedule loads.
+    bye_week: int | None = None
+    #: This week's matchup as "vs SEA" / "@ SEA"; null on a bye or with no data.
+    opponent: str | None = None
+    #: True only when we have this week's schedule and the team has no game.
+    on_bye: bool = False
+
+
+class FreeAgentRow(ScheduleFields):
     player_id: int
     full_name: str
     position: str | None = None
@@ -44,7 +62,7 @@ class FreeAgentRow(BaseModel):
     my_worst_starter_delta: float | None = None
 
 
-class MyPlayerRow(BaseModel):
+class MyPlayerRow(ScheduleFields):
     player_id: int
     full_name: str
     position: str | None = None
@@ -65,7 +83,7 @@ class FreeAgentsResponse(BaseModel):
     my_players: list[MyPlayerRow] = Field(default_factory=list)
 
 
-class LineupPlayer(BaseModel):
+class LineupPlayer(ScheduleFields):
     player_id: int
     full_name: str
     position: str | None = None

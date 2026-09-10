@@ -52,6 +52,17 @@ def test_start_scheduler_registers_every_registry_source(fresh_scheduler, monkey
         assert job is not None, f"no job scheduled for {source}"
 
 
+def test_nfl_schedule_runs_weekly(fresh_scheduler, monkeypatch):
+    monkeypatch.setattr(settings, "SCHEDULER_ENABLED", True)
+
+    start_scheduler()
+
+    trigger = fresh_scheduler.get_job(_job_id("nfl_schedule")).trigger
+    fields = {field.name: str(field) for field in trigger.fields}
+    assert fields["day_of_week"] == "tue"
+    assert (fields["hour"], fields["minute"]) == ("3", "0")
+
+
 def test_start_scheduler_is_idempotent(fresh_scheduler, monkeypatch):
     monkeypatch.setattr(settings, "SCHEDULER_ENABLED", True)
 

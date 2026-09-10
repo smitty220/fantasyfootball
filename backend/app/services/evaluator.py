@@ -26,6 +26,16 @@ whatever week the ingestion last stored -- see :func:`current_projection_week`.
 comparison, weekly and ROS alike, so the "who would this pickup replace?"
 answer never depends on which column you are looking at.
 
+*Schedule scaling* shrinks season-horizon points to the games a team actually
+has left. Season-long projections are published as full-season totals and are
+never restated mid-year, so in week 10 a "rest of season" figure straight off
+the wire still describes 17 games. :func:`_projection_points` therefore
+multiplies every season-horizon number by ``remaining_games(team) / 17`` once
+:mod:`app.services.nfl_schedule` has this season's games on file -- and leaves
+them exactly as they were when it does not, so a database with no schedule
+behaves precisely as it did before the feature existed. Weekly points are
+never touched: a single-week projection already describes one game.
+
 *Projection sources* are selectable. Every entry point takes an optional
 ``sources``: ``None`` keeps the historical behaviour (the best available source
 in :data:`SOURCE_PRIORITY` order wins outright), while an explicit subset of
@@ -117,6 +127,24 @@ GAMES_PER_SEASON = 17
 
 class TradeValidationError(ValueError):
     """A trade request that cannot be evaluated (bad team, bad player, ...)."""
+
+
+def _nfl_schedule():
+    """``app.services.nfl_schedule``, imported at call time rather than above.
+
+    Not a module-level import on purpose. ``app.main`` imports the routers --
+    and therefore this module -- before ``run_migrations()`` runs, and
+    Alembic's ``env.py`` calls ``logging.config.fileConfig(...)``, which
+    defaults to ``disable_existing_loggers=True`` and silently disables every
+    logger created up to that point. Importing ``nfl_schedule`` from here
+    eagerly would put its logger in that window and throw away every warning
+    it emits (a team with a strange number of missing weeks, an unparseable
+    kickoff), including from the scheduled refresh job where they matter most.
+    ``app.main.lifespan`` dodges the same trap the same way.
+    """
+    from app.services import nfl_schedule
+
+    return nfl_schedule
 
 
 # --- projections -----------------------------------------------------------
@@ -253,6 +281,71 @@ def current_projection_week(
     return int(week) if week is not None else None
 
 
+def _schedule_scale(
+    db: Session, season: int, sources: Sequence[str] | None
+) -> dict[str, float] | None:
+    """``team -> remaining-games fraction``, or ``None`` to scale nothing.
+
+    The horizon starts at the week our weekly projections describe
+    (:func:`current_projection_week`), falling back to week 1 before any weekly
+    rows exist -- i.e. "rest of season" means "from the week we are currently
+    looking at, inclusive".
+
+    ``None`` when :mod:`app.services.nfl_schedule` has no games left on file
+    for the season, which covers both "the schedule was never ingested" and
+    "the regular season is over". Both cases keep the raw full-season numbers
+    rather than inventing a scale factor.
+    """
+    schedule = _nfl_schedule()
+    from_week = current_projection_week(db, season, sources) or 1
+    remaining = schedule.team_remaining_games(db, season, from_week)
+    if not remaining:
+        return None
+    return {
+        team: count / schedule.GAMES_PER_SEASON for team, count in remaining.items()
+    }
+
+
+def _scale_to_schedule(
+    db: Session,
+    season: int,
+    points: dict[int, float],
+    sources: Sequence[str] | None,
+    teams: Mapping[int, str | None] | None = None,
+) -> dict[int, float]:
+    """Shrink season-horizon ``points`` to each team's remaining games.
+
+    A player is left untouched when we cannot place them on a team with games
+    left: no ``nfl_team`` at all, an abbreviation we do not recognise, or a
+    team absent from the schedule. Unscaled is the honest fallback -- the
+    alternative would be zeroing out a player we simply failed to look up.
+
+    ``teams`` lets a caller that already has the ``nfl_team`` values hand them
+    over; otherwise they are fetched in a single batched query, never one per
+    player.
+    """
+    if not points:
+        return points
+    scale = _schedule_scale(db, season, sources)
+    if scale is None:
+        return points
+
+    if teams is None:
+        teams = {
+            player_id: team
+            for player_id, team in db.query(Player.id, Player.nfl_team).filter(
+                Player.id.in_(list(points))
+            )
+        }
+
+    normalize_team = _nfl_schedule().normalize_team
+    scaled: dict[int, float] = {}
+    for player_id, value in points.items():
+        factor = scale.get(normalize_team(teams.get(player_id)))
+        scaled[player_id] = value if factor is None else value * factor
+    return scaled
+
+
 def _projection_points(
     db: Session,
     season: int,
@@ -270,6 +363,10 @@ def _projection_points(
     that want a zero fill do it themselves.
 
     Multiple sources are combined by :func:`_blend_points`.
+
+    Season-horizon results are then scaled by each team's remaining share of
+    the season (:func:`_scale_to_schedule`); weekly results are returned as
+    scored, since one week's projection already describes one game.
     """
     query = db.query(Projection).filter(
         Projection.season == season,
@@ -286,10 +383,13 @@ def _projection_points(
     for row in query.all():
         grouped.setdefault(row.player_id, []).append(row)
 
-    return {
+    points = {
         player_id: _blend_points(rows, rules, sources)
         for player_id, rows in grouped.items()
     }
+    if week is not None:
+        return points
+    return _scale_to_schedule(db, season, points, sources)
 
 
 def projection_sources(db: Session, season: int) -> dict:
@@ -416,7 +516,10 @@ def replacement_levels(
 
     ``sources`` picks which projections the pool is ranked on, so VOR is quoted
     against a replacement priced the same way as the player it is subtracted
-    from.
+    from. The pool is scaled to each team's remaining games by the same
+    :func:`_scale_to_schedule` the per-player numbers go through, for the same
+    reason: a replacement level still quoted over 17 games would make every
+    mid-season VOR look catastrophic.
     """
     season = season if season is not None else current_nfl_season()
     rules = scoring.league_rules(league.settings_json)
@@ -436,14 +539,27 @@ def replacement_levels(
         .all()
     )
     grouped: dict[int, tuple[str | None, list[Projection]]] = {}
+    teams: dict[int, str | None] = {}
     for projection, player in rows:
         position, projections = grouped.setdefault(player.id, (player.position, []))
         projections.append(projection)
+        teams[player.id] = player.nfl_team
 
-    for position, projections in grouped.values():
+    scored = _scale_to_schedule(
+        db,
+        season,
+        {
+            player_id: _blend_points(projections, rules, sources)
+            for player_id, (_position, projections) in grouped.items()
+        },
+        sources,
+        teams,
+    )
+
+    for player_id, (position, _projections) in grouped.items():
         if position not in pools:
             continue
-        pools[position].append(_blend_points(projections, rules, sources))
+        pools[position].append(scored[player_id])
 
     levels: dict[str, float] = {}
     for position, points in pools.items():
@@ -631,6 +747,28 @@ def _week_points(
         for pid, points in _projection_points(
             db, season, rules, ids, week=week, sources=sources
         ).items()
+    }
+
+
+# --- schedule context ------------------------------------------------------
+
+
+def _schedule_fields(
+    player: Player | None, opponents: Mapping[str, str]
+) -> dict[str, Any]:
+    """``bye_week`` / ``opponent`` / ``on_bye`` for one player row.
+
+    ``opponents`` is :func:`nfl_schedule.team_opponent` for the week the
+    response describes; it is empty when there is no current week or no
+    schedule on file, and in that case every row reads back as "we don't know"
+    -- a null opponent and ``on_bye`` false, never a guessed bye.
+    """
+    team = _nfl_schedule().normalize_team(player.nfl_team) if player else ""
+    opponent = opponents.get(team) if team else None
+    return {
+        "bye_week": player.bye_week if player else None,
+        "opponent": opponent,
+        "on_bye": bool(opponents) and bool(team) and opponent is None,
     }
 
 
@@ -916,6 +1054,7 @@ def evaluate_free_agents(
     season = season if season is not None else current_nfl_season()
     rules = scoring.league_rules(league.settings_json)
     week = current_projection_week(db, season, sources)
+    opponents = _nfl_schedule().team_opponent(db, season, week)
     positions = position_filter(position)
 
     team = _my_team(db, league)
@@ -934,7 +1073,7 @@ def evaluate_free_agents(
     payload = {
         "week": week,
         "rows": [],
-        "my_players": _my_player_rows(db, my_roster, positions),
+        "my_players": _my_player_rows(db, my_roster, positions, opponents),
     }
 
     players = _free_agent_players(db, league, positions)
@@ -997,6 +1136,7 @@ def evaluate_free_agents(
                 "trade_value": values.get(player.id),
                 "trending_add": trending.get(player.id),
                 "my_worst_starter_delta": delta,
+                **_schedule_fields(player, opponents),
             }
         )
 
@@ -1009,7 +1149,10 @@ def evaluate_free_agents(
 
 
 def _my_player_rows(
-    db: Session, roster: TeamRoster | None, positions: Sequence[str] | None
+    db: Session,
+    roster: TeamRoster | None,
+    positions: Sequence[str] | None,
+    opponents: Mapping[str, str] | None = None,
 ) -> list[dict]:
     """My team's players, starters first (in slot order), then bench by ROS."""
     if roster is None or not roster.player_ids:
@@ -1036,6 +1179,7 @@ def _my_player_rows(
                 "week_points": roster.week_points.get(player.id),
                 "is_starter": slot is not None,
                 "starter_slot": slot,
+                **_schedule_fields(player, opponents or {}),
             }
         )
 
@@ -1072,6 +1216,7 @@ def team_lineup(
     """
     season = season if season is not None else current_nfl_season()
     week = current_projection_week(db, season, sources)
+    opponents = _nfl_schedule().team_opponent(db, season, week)
     roster = _team_roster(db, league, team_id, season, week, sources)
     fa_best_week = _free_agent_best_week_points(db, league, season, week, sources)
     fa_best_ros = _free_agent_best_ros_points(db, league, season, sources)
@@ -1111,6 +1256,7 @@ def team_lineup(
             "percent_started": player.percent_started if player else None,
             "better_fa_week_points": better_fa_week_points,
             "better_fa_ros_points": better_fa_ros_points,
+            **_schedule_fields(player, opponents),
         }
 
     queues: dict[str, list[int]] = {}

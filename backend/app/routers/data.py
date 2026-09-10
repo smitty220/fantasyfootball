@@ -26,6 +26,7 @@ router = APIRouter(prefix="/api/data", tags=["data"])
 #: app.services.crosswalk/sleeper/fantasycalc for the pattern).
 REFRESH_REGISTRY: dict[str, tuple[str, str]] = {
     "crosswalk": ("app.services.crosswalk", "refresh_crosswalk"),
+    "nfl_schedule": ("app.services.nfl_schedule", "refresh_schedule"),
     "sleeper_players": ("app.services.sleeper", "refresh_players"),
     "sleeper_trending": ("app.services.sleeper", "refresh_trending"),
     "fantasycalc": ("app.services.fantasycalc", "refresh_trade_values"),

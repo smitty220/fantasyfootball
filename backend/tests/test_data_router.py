@@ -21,6 +21,10 @@ def test_refresh_unknown_source_404(client):
 
 def test_refresh_registry_entries_resolve_to_callables():
     assert "espn_week_projections" in REFRESH_REGISTRY
+    assert REFRESH_REGISTRY["nfl_schedule"] == (
+        "app.services.nfl_schedule",
+        "refresh_schedule",
+    )
     for source, (module_name, func_name) in REFRESH_REGISTRY.items():
         module = importlib.import_module(module_name)
         assert callable(getattr(module, func_name)), source

@@ -939,6 +939,10 @@ def test_team_lineup_fills_every_slot_and_benches_the_rest(
             "percent_started": None,
             "better_fa_week_points": None,
             "better_fa_ros_points": None,
+            # No NflGame rows seeded, so the schedule fields all read "unknown".
+            "bye_week": None,
+            "opponent": None,
+            "on_bye": False,
         },
     }
     assert "slot" not in lineup["bench"][0]

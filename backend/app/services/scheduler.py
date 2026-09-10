@@ -47,6 +47,10 @@ _JOB_SPECS: dict[str, Callable[[], object]] = {
     "fantasypros_projections": lambda: IntervalTrigger(hours=1, start_date=_offset(minutes=30)),
     "fantasypros_week_projections": lambda: IntervalTrigger(hours=1, start_date=_offset(minutes=40)),
     "crosswalk": lambda: CronTrigger(day_of_week="sun", hour=2, minute=0),
+    # The NFL schedule only moves when a game is flexed, which the league
+    # settles early in the week -- Tuesday morning catches it with a full week
+    # to spare, and refreshes bye weeks at the same time.
+    "nfl_schedule": lambda: CronTrigger(day_of_week="tue", hour=3, minute=0),
 }
 
 

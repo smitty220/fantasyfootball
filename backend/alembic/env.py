@@ -14,9 +14,12 @@ from app.db import Base
 config = context.config
 
 # Interpret the config file for Python logging.
-# This line sets up loggers basically.
+# disable_existing_loggers=False: the app runs migrations at startup AFTER
+# importing its routers/services, and the default (True) silently disables
+# every logger created before this point (it has bitten twice: scheduler,
+# nfl_schedule).
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # Use the application's own settings for the DB URL rather than the static
 # value in alembic.ini, so migrations always target whatever DB the app is
