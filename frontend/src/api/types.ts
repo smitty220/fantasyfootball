@@ -122,6 +122,9 @@ export interface FreeAgentEvalRow {
   my_worst_starter_delta: number | null
   week_points: number | null
   week_delta: number | null
+  bye_week: number | null
+  opponent: string | null
+  on_bye: boolean
 }
 
 export interface MyPlayerEvalRow {
@@ -135,6 +138,9 @@ export interface MyPlayerEvalRow {
   week_points: number | null
   is_starter: boolean
   starter_slot: string | null
+  bye_week: number | null
+  opponent: string | null
+  on_bye: boolean
 }
 
 export interface FreeAgentsEvalResponse {
@@ -157,6 +163,9 @@ export interface LineupPlayer {
   percent_started: number | null
   better_fa_week_points: number | null
   better_fa_ros_points: number | null
+  bye_week: number | null
+  opponent: string | null
+  on_bye: boolean
 }
 
 export interface LineupSlotEntry {
@@ -231,6 +240,7 @@ export type DataSourceId =
   | 'espn_week_projections'
   | 'fantasypros_projections'
   | 'fantasypros_week_projections'
+  | 'nfl_schedule'
 
 export type ProjectionSourceId = 'fantasypros' | 'espn'
 

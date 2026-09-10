@@ -205,7 +205,7 @@ export function FreeAgentsPanel({
               </div>
               <div className="my-player-card-meta">
                 <span>{p.position}</span>
-                <span>Wk {formatNum(p.week_points)}</span>
+                {p.on_bye ? <span className="bye-text">BYE</span> : <span>Wk {formatNum(p.week_points)}</span>}
                 <span>ROS {formatNum(p.ros_points)}</span>
               </div>
             </div>
@@ -228,6 +228,7 @@ export function FreeAgentsPanel({
               <tr>
                 <th>{sortHeader('full_name', 'Player')}</th>
                 <th>{sortHeader('position', 'Pos')}</th>
+                <th>Opp</th>
                 <th>{sortHeader('week_points', weekPtsLabel)}</th>
                 <th>{sortHeader('ros_points', 'ROS Pts')}</th>
                 <th>{sortHeader('ppg', 'PPG')}</th>
@@ -252,7 +253,10 @@ export function FreeAgentsPanel({
                     </div>
                   </td>
                   <td>{row.position}</td>
-                  <td>{formatNum(row.week_points)}</td>
+                  <td>{row.on_bye ? <Badge tone="danger">BYE</Badge> : row.opponent ?? '—'}</td>
+                  <td className={row.on_bye ? 'bye-text' : undefined}>
+                    {row.on_bye ? 'BYE' : formatNum(row.week_points)}
+                  </td>
                   <td>{formatNum(row.ros_points)}</td>
                   <td>{formatNum(row.ppg)}</td>
                   <td>{formatNum(row.vor)}</td>

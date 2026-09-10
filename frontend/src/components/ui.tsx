@@ -35,7 +35,7 @@ export function Card({ children, className }: { children: ReactNode; className?:
   return <div className={`card${className ? ` ${className}` : ''}`}>{children}</div>
 }
 
-type BadgeTone = 'neutral' | 'accent' | 'success' | 'warning'
+type BadgeTone = 'neutral' | 'accent' | 'success' | 'warning' | 'danger'
 
 export function Badge({ children, tone = 'neutral' }: { children: ReactNode; tone?: BadgeTone }) {
   return <span className={`badge badge-${tone}`}>{children}</span>

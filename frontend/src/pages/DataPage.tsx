@@ -48,6 +48,11 @@ const SOURCES: { id: DataSourceId; name: string; description: string }[] = [
     name: 'FantasyPros weekly projections',
     description: 'Current-week expert-consensus projections (requires API key).',
   },
+  {
+    id: 'nfl_schedule',
+    name: 'NFL schedule',
+    description: 'Real NFL schedule from nflverse: opponents, bye weeks, remaining-games scaling for ROS points.',
+  },
 ]
 
 // Human interval label per source, matching the trigger cadence configured
@@ -62,6 +67,7 @@ const REFRESH_INTERVAL_LABEL: Record<DataSourceId, string> = {
   espn_week_projections: '6h',
   fantasypros_projections: '1h',
   fantasypros_week_projections: '1h',
+  nfl_schedule: 'week',
 }
 
 function formatCountdown(nextRunAt: string | null | undefined): string | null {

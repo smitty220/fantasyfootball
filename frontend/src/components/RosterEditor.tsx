@@ -444,7 +444,12 @@ export function RosterEditor({
           {renderFaChips(player)}
         </span>
         <span className="lineup-row-team">{player.nfl_team || 'FA'}</span>
-        <span className="lineup-row-stat">{fmtPts(player.week_points)}</span>
+        <span className="lineup-row-opp">
+          {player.on_bye ? <Badge tone="danger">BYE</Badge> : player.opponent ?? '—'}
+        </span>
+        <span className={`lineup-row-stat${player.on_bye ? ' bye-text' : ''}`}>
+          {player.on_bye ? 'BYE' : fmtPts(player.week_points)}
+        </span>
         <span className="lineup-row-stat">{fmtPts(player.ros_points)}</span>
         <span className="lineup-row-stat lineup-row-pct">{fmtPct(player.percent_owned)}</span>
         <span className="lineup-row-stat lineup-row-pct">{fmtPct(player.percent_started)}</span>
@@ -472,7 +477,7 @@ export function RosterEditor({
         key={index}
         className={`lineup-row${stateClass}${isSelected ? ' lineup-row-selected' : ''}${
           player ? '' : ' lineup-row-empty'
-        }${benchUpgrade ? ' lineup-row-bench-alert' : ''}`}
+        }${benchUpgrade ? ' lineup-row-bench-alert' : ''}${player?.on_bye ? ' lineup-row-bye' : ''}`}
         role={editable ? 'button' : undefined}
         tabIndex={editable ? 0 : undefined}
         draggable={editable && !!player}
@@ -502,7 +507,9 @@ export function RosterEditor({
     return (
       <li key={player.player_id} className="lineup-bench-item">
         <div
-          className={`lineup-row${isSelected ? ' lineup-row-selected' : ''}`}
+          className={`lineup-row${isSelected ? ' lineup-row-selected' : ''}${
+            player.on_bye ? ' lineup-row-bye' : ''
+          }`}
           role={editable ? 'button' : undefined}
           tabIndex={editable ? 0 : undefined}
           draggable={editable}
@@ -556,6 +563,7 @@ export function RosterEditor({
             <span className="lineup-col">Pos</span>
             <span className="lineup-col">Player</span>
             <span className="lineup-col">Team</span>
+            <span className="lineup-col lineup-col-opp">Opp</span>
             <span className="lineup-col">Wk</span>
             <span className="lineup-col">ROS</span>
             <span className="lineup-col lineup-col-pct">%Own</span>

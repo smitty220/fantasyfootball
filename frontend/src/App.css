@@ -231,6 +231,10 @@
   background: var(--warning-bg);
   color: var(--warning);
 }
+.badge-danger {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
 
 /* Buttons */
 .btn {
@@ -883,11 +887,11 @@ a.tab {
 }
 
 /* Column grid shared by the header and every player/slot row. Order matches
-   the spec: chip, pos, name, team, wk, ros, %own, %start, actions. */
+   the spec: chip, pos, name, team, opp, wk, ros, %own, %start, actions. */
 .lineup-row,
 .lineup-columns-header {
   display: grid;
-  grid-template-columns: 62px 40px minmax(0, 1fr) 44px 46px 46px 54px 58px minmax(24px, auto);
+  grid-template-columns: 62px 40px minmax(0, 1fr) 44px 50px 46px 46px 54px 58px minmax(24px, auto);
   align-items: center;
   gap: 8px;
 }
@@ -899,7 +903,9 @@ a.tab {
   }
 
   .lineup-col-pct,
-  .lineup-row-pct {
+  .lineup-row-pct,
+  .lineup-col-opp,
+  .lineup-row-opp {
     display: none;
   }
 }
@@ -1031,9 +1037,15 @@ a.tab {
   white-space: nowrap;
 }
 
-.lineup-row-bench-alert {
+.lineup-row-bench-alert,
+.lineup-row-bye {
   border-color: var(--danger);
   background: var(--danger-bg);
+}
+
+.bye-text {
+  color: var(--danger);
+  font-weight: 700;
 }
 
 @media (max-width: 520px) {
@@ -1046,6 +1058,12 @@ a.tab {
 .lineup-row-team {
   font-size: 12px;
   color: var(--text);
+}
+
+.lineup-row-opp {
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
 }
 
 .lineup-row-stat {
@@ -1283,6 +1301,14 @@ a.tab {
   font-weight: 700;
   margin-left: auto;
   padding-left: 8px;
+  flex-shrink: 0;
+}
+
+.matchup-cell-opp {
+  font-size: 11px;
+  color: var(--text);
+  opacity: 0.7;
+  white-space: nowrap;
   flex-shrink: 0;
 }
 

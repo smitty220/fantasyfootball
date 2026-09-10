@@ -27,6 +27,11 @@ function MatchupCell({ player, lead }: { player: LineupPlayer | null; lead: bool
       {player ? (
         <>
           <span className="matchup-cell-name">{player.full_name}</span>
+          {player.on_bye ? (
+            <Badge tone="danger">BYE</Badge>
+          ) : (
+            player.opponent && <span className="matchup-cell-opp">{player.opponent}</span>
+          )}
           {player.injury_status && <Badge tone="warning">{player.injury_status}</Badge>}
           <span className="matchup-cell-value">{fmtPts(player.week_points)}</span>
         </>
