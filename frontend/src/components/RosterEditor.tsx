@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { DragEvent, KeyboardEvent, MouseEvent } from 'react'
+import type { DragEvent, KeyboardEvent, MouseEvent, ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   addRosterPlayer,
@@ -79,6 +79,22 @@ function isEligibleForSlot(position: string, slot: string): boolean {
   if (slot === 'SUPERFLEX') return position === 'QB' || FLEX_ELIGIBLE.includes(position)
   if (slot === 'DEF') return DEF_ALIASES.includes(position)
   return position === slot
+}
+
+// Finds the best bench player eligible for a filled starting slot whose
+// week_points strictly beats the starter's — informational only, so it runs
+// in read-only mode too. Bench players with no week projection are ignored.
+function findBenchUpgrade(slot: string, occupantWeekPoints: number | null, bench: LineupPlayer[]): LineupPlayer | null {
+  const occupant = occupantWeekPoints ?? -Infinity
+  let best: LineupPlayer | null = null
+  for (const p of bench) {
+    if (p.week_points == null) continue
+    if (!isEligibleForSlot(p.position, slot)) continue
+    if (p.week_points > occupant && (best == null || p.week_points > (best.week_points as number))) {
+      best = p
+    }
+  }
+  return best
 }
 
 type MoveSource = { type: 'bench'; player: LineupPlayer } | { type: 'slot'; index: number; player: LineupPlayer }
@@ -359,30 +375,54 @@ export function RosterEditor({
     )
   }
 
-  function handleFaFlagClick(e: MouseEvent, player: LineupPlayer) {
+  function handleFaFlagClick(e: MouseEvent, player: LineupPlayer, sort: 'week' | 'ros') {
     e.stopPropagation()
-    navigate(`/leagues/${encodeURIComponent(leagueKey)}?tab=free-agents&position=${encodeURIComponent(player.position)}`)
-  }
-
-  function renderFaFlag(player: LineupPlayer) {
-    if (player.better_fa_week_points == null) return null
-    const value = player.better_fa_week_points
-    return (
-      <button
-        type="button"
-        className="fa-upgrade-chip"
-        title={`A free agent ${player.position} projects ${value.toFixed(1)} pts this week — click to view`}
-        draggable={false}
-        onMouseDown={(e) => e.stopPropagation()}
-        onDragStart={(e) => e.stopPropagation()}
-        onClick={(e) => handleFaFlagClick(e, player)}
-      >
-        FA Available
-      </button>
+    navigate(
+      `/leagues/${encodeURIComponent(leagueKey)}?tab=free-agents&position=${encodeURIComponent(player.position)}&sort=${sort}`,
     )
   }
 
-  function renderPlayerCells(player: LineupPlayer) {
+  function renderFaChips(player: LineupPlayer) {
+    const chips: ReactNode[] = []
+    if (player.better_fa_week_points != null) {
+      const value = player.better_fa_week_points
+      chips.push(
+        <button
+          key="week"
+          type="button"
+          className="fa-upgrade-chip"
+          title={`A free agent ${player.position} projects ${value.toFixed(1)} pts this week — click to view`}
+          draggable={false}
+          onMouseDown={(e) => e.stopPropagation()}
+          onDragStart={(e) => e.stopPropagation()}
+          onClick={(e) => handleFaFlagClick(e, player, 'week')}
+        >
+          FA Wk
+        </button>,
+      )
+    }
+    if (player.better_fa_ros_points != null) {
+      const value = player.better_fa_ros_points
+      chips.push(
+        <button
+          key="ros"
+          type="button"
+          className="fa-upgrade-chip"
+          title={`A free agent ${player.position} projects ${value.toFixed(1)} rest-of-season pts — click to view`}
+          draggable={false}
+          onMouseDown={(e) => e.stopPropagation()}
+          onDragStart={(e) => e.stopPropagation()}
+          onClick={(e) => handleFaFlagClick(e, player, 'ros')}
+        >
+          FA ROS
+        </button>,
+      )
+    }
+    if (chips.length === 0) return null
+    return <span className="fa-chip-group">{chips}</span>
+  }
+
+  function renderPlayerCells(player: LineupPlayer, benchUpgrade?: LineupPlayer | null) {
     return (
       <>
         <span className="lineup-row-pos">{player.position}</span>
@@ -391,7 +431,17 @@ export function RosterEditor({
           {player.injury_status && (
             <Badge tone="warning">{player.injury_status}</Badge>
           )}
-          {renderFaFlag(player)}
+          {benchUpgrade && (
+            <span
+              className="bench-alert-chip"
+              title={`Bench player ${benchUpgrade.full_name} projects ${benchUpgrade.week_points!.toFixed(
+                1,
+              )} pts this week — consider swapping`}
+            >
+              ▼ bench
+            </span>
+          )}
+          {renderFaChips(player)}
         </span>
         <span className="lineup-row-team">{player.nfl_team || 'FA'}</span>
         <span className="lineup-row-stat">{fmtPts(player.week_points)}</span>
@@ -416,12 +466,13 @@ export function RosterEditor({
     }
     const isSelected = !!(selectedSource && selectedSource.type === 'slot' && selectedSource.index === index)
     const player = entry.player
+    const benchUpgrade = player ? findBenchUpgrade(entry.slot, player.week_points, lineup?.bench ?? []) : null
     return (
       <div
         key={index}
         className={`lineup-row${stateClass}${isSelected ? ' lineup-row-selected' : ''}${
           player ? '' : ' lineup-row-empty'
-        }`}
+        }${benchUpgrade ? ' lineup-row-bench-alert' : ''}`}
         role={editable ? 'button' : undefined}
         tabIndex={editable ? 0 : undefined}
         draggable={editable && !!player}
@@ -434,7 +485,7 @@ export function RosterEditor({
       >
         <span className="lineup-row-chip">{slotDisplayLabel(entry.slot)}</span>
         {player ? (
-          renderPlayerCells(player)
+          renderPlayerCells(player, benchUpgrade)
         ) : (
           <span className="lineup-row-empty-label">Drop a {slotEligibleHint(entry.slot)} here</span>
         )}

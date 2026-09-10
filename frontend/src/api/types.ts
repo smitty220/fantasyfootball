@@ -156,6 +156,7 @@ export interface LineupPlayer {
   percent_owned: number | null
   percent_started: number | null
   better_fa_week_points: number | null
+  better_fa_ros_points: number | null
 }
 
 export interface LineupSlotEntry {

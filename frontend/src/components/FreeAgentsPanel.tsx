@@ -45,12 +45,23 @@ function renderDelta(value: number | null | undefined) {
   )
 }
 
+// Maps the FA-upgrade chip's deep-link sort ("week" | "ros") to the table's
+// sort key. Returns null when no explicit sort was requested, so callers can
+// fall back to their own default.
+function sortKeyForInitialSort(sort: 'week' | 'ros' | undefined): SortKey | null {
+  if (sort === 'week') return 'week_delta'
+  if (sort === 'ros') return 'my_worst_starter_delta'
+  return null
+}
+
 export function FreeAgentsPanel({
   leagueKey,
   initialPosition,
+  initialSort,
 }: {
   leagueKey: string
   initialPosition?: string
+  initialSort?: 'week' | 'ros'
 }) {
   const [position, setPosition] = useState(initialPosition ?? '')
   const [limit, setLimit] = useState(50)
@@ -58,10 +69,11 @@ export function FreeAgentsPanel({
   const [myPlayers, setMyPlayers] = useState<MyPlayerEvalRow[]>([])
   const [week, setWeek] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
-  // Deep links from the FA-upgrade chips answer "who beats my starter this
-  // week?", so they land sorted by the weekly delta instead of VOR.
+  // Deep links from the FA-upgrade chips answer "who beats my starter?", so
+  // they land sorted by the weekly or ROS delta instead of VOR. A position
+  // with no explicit sort still defaults to the weekly delta, as before.
   const [sortKey, setSortKey] = useState<SortKey>(
-    initialPosition !== undefined ? 'week_delta' : 'vor',
+    () => sortKeyForInitialSort(initialSort) ?? (initialPosition !== undefined ? 'week_delta' : 'vor'),
   )
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
@@ -69,10 +81,10 @@ export function FreeAgentsPanel({
   useEffect(() => {
     if (initialPosition !== undefined) {
       setPosition(initialPosition)
-      setSortKey('week_delta')
+      setSortKey(sortKeyForInitialSort(initialSort) ?? 'week_delta')
       setSortDir('desc')
     }
-  }, [initialPosition])
+  }, [initialPosition, initialSort])
   const [sources, setSources] = useState<string[]>([])
   const { showError } = useToast()
 

@@ -12,6 +12,11 @@ import { FreeAgentsPanel } from '../components/FreeAgentsPanel'
 import { ImportRosterPanel } from '../components/ImportRosterPanel'
 
 type Tab = 'teams' | 'free-agents'
+type FaSort = 'week' | 'ros'
+
+function parseFaSort(value: string | null): FaSort | undefined {
+  return value === 'week' || value === 'ros' ? value : undefined
+}
 
 export function LeagueDetailPage() {
   const { leagueKey = '' } = useParams<{ leagueKey: string }>()
@@ -26,13 +31,15 @@ export function LeagueDetailPage() {
   const [initialFaPosition, setInitialFaPosition] = useState<string | undefined>(
     () => searchParams.get('position') || undefined,
   )
+  const [initialFaSort, setInitialFaSort] = useState<FaSort | undefined>(() => parseFaSort(searchParams.get('sort')))
 
-  // The FA-upgrade chips navigate here with ?tab=&position= while this page is
-  // already mounted, so honor param changes after mount too.
+  // The FA-upgrade chips navigate here with ?tab=&position=&sort= while this
+  // page is already mounted, so honor param changes after mount too.
   useEffect(() => {
     if (searchParams.get('tab') === 'free-agents') {
       setTab('free-agents')
       setInitialFaPosition(searchParams.get('position') || undefined)
+      setInitialFaSort(parseFaSort(searchParams.get('sort')))
     }
   }, [searchParams])
   const [editingTeamId, setEditingTeamId] = useState<number | null>(null)
@@ -336,7 +343,7 @@ export function LeagueDetailPage() {
 
       {tab === 'free-agents' && (
         <Card>
-          <FreeAgentsPanel leagueKey={leagueKey} initialPosition={initialFaPosition} />
+          <FreeAgentsPanel leagueKey={leagueKey} initialPosition={initialFaPosition} initialSort={initialFaSort} />
         </Card>
       )}
     </div>
