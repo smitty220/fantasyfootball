@@ -296,6 +296,60 @@ export interface YahooStatus {
   expires_at?: string | null
 }
 
+export interface DashboardMyTeam {
+  id: number
+  name: string
+}
+
+export interface DashboardByeStarter {
+  name: string
+  slot: string
+}
+
+export interface DashboardInjuredStarter {
+  name: string
+  slot: string
+  status: string
+}
+
+export interface DashboardBenchBeatsStarter {
+  starter: string
+  slot: string
+  bench: string
+  bench_week_points: number
+}
+
+export interface DashboardAlerts {
+  bye_starters: DashboardByeStarter[]
+  injured_starters: DashboardInjuredStarter[]
+  bench_beats_starter: DashboardBenchBeatsStarter[]
+  fa_week_flags: number
+  fa_ros_flags: number
+}
+
+export interface DashboardTopFreeAgent {
+  name: string
+  position: string
+  vor: number
+  week_delta: number | null
+  trending_add: number | null
+}
+
+export interface DashboardLeague {
+  league_key: string
+  name: string
+  is_keeper: boolean
+  week: number | null
+  my_team: DashboardMyTeam | null
+  alerts: DashboardAlerts | null
+  top_free_agents: DashboardTopFreeAgent[]
+  my_lineup_week_points: number | null
+}
+
+export interface DashboardResponse {
+  leagues: DashboardLeague[]
+}
+
 export interface HealthResponse {
   status: string
   version: string

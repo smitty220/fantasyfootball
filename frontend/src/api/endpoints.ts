@@ -2,6 +2,7 @@ import { apiDelete, apiGet, apiPost, apiPut, buildQuery } from './client'
 import type {
   CreateManualLeaguePayload,
   CreateTeamPayload,
+  DashboardResponse,
   DataRefreshResult,
   DataScheduleRow,
   DataSourceId,
@@ -49,6 +50,12 @@ export function getYahooStatus(): Promise<YahooStatus> {
 
 export function getLeagues(): Promise<League[]> {
   return apiGet('/api/leagues')
+}
+
+export function getDashboard(sources?: string[]): Promise<DashboardResponse> {
+  return apiGet(
+    `/api/dashboard${buildQuery({ sources: sources && sources.length > 0 ? sources.join(',') : undefined })}`,
+  )
 }
 
 export function createManualLeague(payload: CreateManualLeaguePayload): Promise<LeagueDetail> {
