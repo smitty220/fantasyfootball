@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models import League, Team
 from app.services import evaluator
+from app.services import trade_finder as trade_finder_service
 from app.services.yahoo.sync import current_nfl_season
 
 router = APIRouter(prefix="/api/leagues", tags=["evaluate"])
@@ -161,6 +162,48 @@ class TradeResponse(BaseModel):
     notes: list[str]
 
 
+class TradeFinderPlayer(BaseModel):
+    player_id: int
+    full_name: str
+    position: str | None = None
+    ros_points: float
+    #: FantasyCalc redraft value; null when the market has no price on file.
+    value: float | None = None
+
+
+class TradeFinderOpponent(BaseModel):
+    team_id: int
+    name: str
+
+
+class TradeFinderTeam(BaseModel):
+    id: int
+    name: str
+
+
+class TradeSuggestion(BaseModel):
+    opponent: TradeFinderOpponent
+    #: Players I would give up.
+    sends: list[TradeFinderPlayer]
+    #: Players I would get back.
+    receives: list[TradeFinderPlayer]
+    #: Change in my optimal lineup's ROS points; always positive here.
+    my_lineup_delta: float
+    #: Same for the opponent -- never far below zero, or they would decline.
+    opp_lineup_delta: float
+    #: How far apart the two sides' market values are, as a fraction.
+    value_margin_pct: float
+    #: "1for1" / "2for1" (I send two) / "1for2" (I send one).
+    kind: str
+
+
+class TradeFinderResponse(BaseModel):
+    league_key: str
+    season: int
+    my_team: TradeFinderTeam
+    suggestions: list[TradeSuggestion]
+
+
 class ProjectionSourceRow(BaseModel):
     source: str
     #: When this source's season-long rows were last fetched; null if it has none.
@@ -303,6 +346,46 @@ def trade_analysis(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return TradeResponse(**result)
+
+
+@router.get(
+    "/{league_key}/evaluate/trade-finder", response_model=TradeFinderResponse
+)
+def trade_finder(
+    league_key: str,
+    limit: int = Query(default=10, ge=1, le=25),
+    sources: str | None = Query(default=None, description=SOURCES_DESCRIPTION),
+    db: Session = Depends(get_db),
+) -> TradeFinderResponse:
+    """Trades worth proposing between my team and every other team.
+
+    Ranked by how much each one improves my optimal lineup; every suggestion
+    is close to fair on market value and leaves the other manager no worse
+    off, so they are offers that could plausibly be accepted.
+
+    409 when the league has no team flagged as mine -- there is nobody to
+    trade for until one is picked.
+    """
+    league = _get_league(db, league_key)
+    season = current_nfl_season()
+
+    try:
+        result = trade_finder_service.find_trades(
+            db,
+            league,
+            sources=_sources(sources),
+            limit=limit,
+            season=season,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return TradeFinderResponse(
+        league_key=league.league_key,
+        season=season,
+        my_team=TradeFinderTeam(**result["my_team"]),
+        suggestions=[TradeSuggestion(**row) for row in result["suggestions"]],
+    )
 
 
 @projections_router.get("/sources", response_model=ProjectionSourcesResponse)
