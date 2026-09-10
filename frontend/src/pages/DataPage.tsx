@@ -49,6 +49,11 @@ const SOURCES: { id: DataSourceId; name: string; description: string }[] = [
     description: 'Current-week expert-consensus projections (requires API key).',
   },
   {
+    id: 'nfl_actuals',
+    name: 'NFL actual stats',
+    description: 'Real weekly player results from nflverse; powers the Accuracy page.',
+  },
+  {
     id: 'nfl_schedule',
     name: 'NFL schedule',
     description: 'Real NFL schedule from nflverse: opponents, bye weeks, remaining-games scaling for ROS points.',
@@ -68,6 +73,7 @@ const REFRESH_INTERVAL_LABEL: Record<DataSourceId, string> = {
   fantasypros_projections: '1h',
   fantasypros_week_projections: '1h',
   nfl_schedule: 'week',
+  nfl_actuals: '2x week',
 }
 
 function formatCountdown(nextRunAt: string | null | undefined): string | null {

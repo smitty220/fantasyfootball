@@ -241,6 +241,7 @@ export type DataSourceId =
   | 'fantasypros_projections'
   | 'fantasypros_week_projections'
   | 'nfl_schedule'
+  | 'nfl_actuals'
 
 export type ProjectionSourceId = 'fantasypros' | 'espn'
 

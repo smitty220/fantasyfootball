@@ -9,6 +9,7 @@ import app.models  # noqa: F401  (register models with Base before migrating)
 from app.middleware import SessionAuthMiddleware
 from app.migrations import backup_sqlite, run_migrations
 from app.routers import (
+    accuracy,
     app_auth,
     auth,
     dashboard,
@@ -86,6 +87,7 @@ def create_app() -> FastAPI:
     app.include_router(data.router)
     app.include_router(evaluate.router)
     app.include_router(evaluate.projections_router)
+    app.include_router(accuracy.router)
     app.include_router(dashboard.router)
 
     if FRONTEND_DIST.is_dir():

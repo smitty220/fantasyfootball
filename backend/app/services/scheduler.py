@@ -51,6 +51,11 @@ _JOB_SPECS: dict[str, Callable[[], object]] = {
     # settles early in the week -- Tuesday morning catches it with a full week
     # to spare, and refreshes bye weeks at the same time.
     "nfl_schedule": lambda: CronTrigger(day_of_week="tue", hour=3, minute=0),
+    # Actual weekly stats only change when games are played: the week is
+    # complete after Monday night, so Tuesday morning picks it up, and Friday
+    # catches the stat corrections nflverse folds in over the following days
+    # (an hour after the schedule job, which shares the same nflverse origin).
+    "nfl_actuals": lambda: CronTrigger(day_of_week="tue,fri", hour=4, minute=0),
 }
 
 
