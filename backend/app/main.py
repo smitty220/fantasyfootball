@@ -19,6 +19,7 @@ from app.routers import (
     leagues,
     manual,
     players,
+    standings,
 )
 
 FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
@@ -89,6 +90,7 @@ def create_app() -> FastAPI:
     app.include_router(evaluate.projections_router)
     app.include_router(accuracy.router)
     app.include_router(dashboard.router)
+    app.include_router(standings.router)
 
     if FRONTEND_DIST.is_dir():
         app.mount(

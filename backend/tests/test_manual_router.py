@@ -602,3 +602,196 @@ def test_lineup_endpoints_reject_a_yahoo_team(client, db_session, yahoo_league):
 def test_lineup_endpoints_on_an_unknown_team_404(client):
     assert _put_lineup(client, 999, []).status_code == 404
     assert client.delete("/api/manual/teams/999/lineup").status_code == 404
+
+
+# --- matchup CRUD ----------------------------------------------------------
+
+
+@pytest.fixture()
+def matchup_league(client):
+    """A manual league with four teams; yields ``(league_key, [team ids])``."""
+    league_key = _create_manual_league(client).json()["league_key"]
+    team_ids = [
+        client.post(
+            f"/api/manual/leagues/{league_key}/teams", json={"name": f"Team {n}"}
+        ).json()["id"]
+        for n in range(1, 5)
+    ]
+    return league_key, team_ids
+
+
+def _put_week(client, league_key: str, week: int, matchups: list[dict]):
+    return client.put(
+        f"/api/manual/leagues/{league_key}/matchups/{week}",
+        json={"matchups": matchups},
+    )
+
+
+def test_put_matchups_stores_status_and_team_names(client, matchup_league):
+    league_key, teams = matchup_league
+    response = _put_week(
+        client,
+        league_key,
+        1,
+        [
+            {
+                "home_team_id": teams[0],
+                "away_team_id": teams[1],
+                "home_points": 101.5,
+                "away_points": 99.0,
+            },
+            {"home_team_id": teams[2], "away_team_id": teams[3]},
+        ],
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert [row["status"] for row in body] == ["final", "scheduled"]
+    assert body[0]["home_team_name"] == "Team 1"
+    assert body[0]["away_team_name"] == "Team 2"
+    assert body[0]["week"] == 1
+    assert body[1]["home_points"] is None
+
+
+def test_put_matchups_is_a_full_replace(client, matchup_league):
+    league_key, teams = matchup_league
+    _put_week(
+        client,
+        league_key,
+        1,
+        [
+            {"home_team_id": teams[0], "away_team_id": teams[1]},
+            {"home_team_id": teams[2], "away_team_id": teams[3]},
+        ],
+    )
+    response = _put_week(
+        client, league_key, 1, [{"home_team_id": teams[0], "away_team_id": teams[2]}]
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    assert (body[0]["home_team_id"], body[0]["away_team_id"]) == (teams[0], teams[2])
+
+
+def test_put_matchups_allows_a_bye(client, matchup_league):
+    league_key, teams = matchup_league
+    response = _put_week(
+        client,
+        league_key,
+        3,
+        [
+            {"home_team_id": teams[0], "away_team_id": teams[1]},
+            {"home_team_id": teams[2], "away_team_id": None},
+        ],
+    )
+    assert response.status_code == 200
+    assert response.json()[1]["away_team_id"] is None
+
+
+def test_put_matchups_rejects_a_team_from_another_league(client, matchup_league):
+    league_key, teams = matchup_league
+    other_key = _create_manual_league(client, name="Other").json()["league_key"]
+    outsider = client.post(
+        f"/api/manual/leagues/{other_key}/teams", json={"name": "Outsider"}
+    ).json()["id"]
+
+    response = _put_week(
+        client, league_key, 1, [{"home_team_id": teams[0], "away_team_id": outsider}]
+    )
+    assert response.status_code == 400
+    assert str(outsider) in response.json()["detail"]
+
+
+def test_put_matchups_rejects_a_repeated_team(client, matchup_league):
+    league_key, teams = matchup_league
+    response = _put_week(
+        client,
+        league_key,
+        1,
+        [
+            {"home_team_id": teams[0], "away_team_id": teams[1]},
+            {"home_team_id": teams[0], "away_team_id": teams[2]},
+        ],
+    )
+    assert response.status_code == 400
+    assert "more than one" in response.json()["detail"]
+
+
+def test_put_matchups_rejects_a_team_playing_itself(client, matchup_league):
+    league_key, teams = matchup_league
+    response = _put_week(
+        client, league_key, 1, [{"home_team_id": teams[0], "away_team_id": teams[0]}]
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.parametrize("week", [0, 19])
+def test_put_matchups_rejects_an_out_of_range_week(client, matchup_league, week):
+    league_key, teams = matchup_league
+    response = _put_week(
+        client, league_key, week, [{"home_team_id": teams[0], "away_team_id": teams[1]}]
+    )
+    assert response.status_code == 400
+
+
+def test_a_rejected_week_leaves_the_stored_one_alone(client, matchup_league):
+    league_key, teams = matchup_league
+    _put_week(
+        client, league_key, 1, [{"home_team_id": teams[0], "away_team_id": teams[1]}]
+    )
+    _put_week(
+        client,
+        league_key,
+        1,
+        [
+            {"home_team_id": teams[0], "away_team_id": teams[1]},
+            {"home_team_id": teams[1], "away_team_id": teams[2]},
+        ],
+    )
+    rows = client.get(f"/api/manual/leagues/{league_key}/matchups?week=1").json()
+    assert len(rows) == 1
+
+
+def test_get_matchups_all_weeks_and_filtered(client, matchup_league):
+    league_key, teams = matchup_league
+    _put_week(
+        client, league_key, 1, [{"home_team_id": teams[0], "away_team_id": teams[1]}]
+    )
+    _put_week(
+        client, league_key, 2, [{"home_team_id": teams[0], "away_team_id": teams[2]}]
+    )
+
+    every = client.get(f"/api/manual/leagues/{league_key}/matchups")
+    assert every.status_code == 200
+    assert [row["week"] for row in every.json()] == [1, 2]
+
+    one = client.get(f"/api/manual/leagues/{league_key}/matchups?week=2")
+    assert [row["week"] for row in one.json()] == [2]
+
+
+def test_delete_week_matchups(client, matchup_league):
+    league_key, teams = matchup_league
+    _put_week(
+        client, league_key, 1, [{"home_team_id": teams[0], "away_team_id": teams[1]}]
+    )
+    _put_week(
+        client, league_key, 2, [{"home_team_id": teams[0], "away_team_id": teams[2]}]
+    )
+
+    assert (
+        client.delete(f"/api/manual/leagues/{league_key}/matchups/1").status_code == 204
+    )
+    remaining = client.get(f"/api/manual/leagues/{league_key}/matchups").json()
+    assert [row["week"] for row in remaining] == [2]
+
+
+def test_matchup_endpoints_reject_a_yahoo_league(client, yahoo_league):
+    key = yahoo_league.league_key
+    assert _put_week(client, key, 1, []).status_code == 409
+    assert client.get(f"/api/manual/leagues/{key}/matchups").status_code == 409
+    assert client.delete(f"/api/manual/leagues/{key}/matchups/1").status_code == 409
+
+
+def test_matchup_endpoints_on_an_unknown_league_404(client):
+    assert _put_week(client, "manual.999", 1, []).status_code == 404
+    assert client.get("/api/manual/leagues/manual.999/matchups").status_code == 404
+    assert client.delete("/api/manual/leagues/manual.999/matchups/1").status_code == 404

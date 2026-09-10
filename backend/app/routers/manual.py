@@ -8,7 +8,7 @@ refuses (404/409) to touch anything synced from Yahoo.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -91,6 +91,31 @@ class LineupAssignment(BaseModel):
 
 class LineupSet(BaseModel):
     assignments: list[LineupAssignment] = Field(default_factory=list)
+
+
+class MatchupEntry(BaseModel):
+    home_team_id: int
+    #: Null for a bye: an odd team count leaves one team without an opponent.
+    away_team_id: int | None = None
+    home_points: float | None = None
+    away_points: float | None = None
+
+
+class MatchupWeekSet(BaseModel):
+    matchups: list[MatchupEntry] = Field(default_factory=list)
+
+
+class MatchupManualOut(BaseModel):
+    id: int
+    week: int
+    home_team_id: int
+    home_team_name: str | None = None
+    away_team_id: int | None = None
+    away_team_name: str | None = None
+    home_points: float | None = None
+    away_points: float | None = None
+    is_playoffs: bool = False
+    status: str | None = None
 
 
 class RosterPasteImport(BaseModel):
@@ -491,6 +516,147 @@ def clear_lineup(team_id: int, db: Session = Depends(get_db)) -> Response:
     db.query(RosterSlot).filter(
         RosterSlot.team_id == team.id,
         RosterSlot.week == evaluator.MANUAL_LINEUP_WEEK,
+    ).delete(synchronize_session=False)
+    db.commit()
+    return Response(status_code=204)
+
+
+# --- matchup endpoints -----------------------------------------------------
+
+#: Weeks a matchup may be entered for. 18 covers the longest NFL regular
+#: season plus the fantasy playoff weeks played inside it.
+MIN_MATCHUP_WEEK = 1
+MAX_MATCHUP_WEEK = 18
+
+
+def _validated_week(week: int) -> int:
+    if not MIN_MATCHUP_WEEK <= week <= MAX_MATCHUP_WEEK:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Week must be between {MIN_MATCHUP_WEEK} and {MAX_MATCHUP_WEEK}",
+        )
+    return week
+
+
+def _matchup_rows(
+    db: Session, league: League, week: int | None
+) -> list[MatchupManualOut]:
+    """This league's matchups (one week, or all of them) with team names filled in."""
+    names = {
+        team_id: name
+        for team_id, name in db.query(Team.id, Team.name).filter(
+            Team.league_id == league.id
+        )
+    }
+    query = db.query(Matchup).filter(Matchup.league_id == league.id)
+    if week is not None:
+        query = query.filter(Matchup.week == week)
+
+    return [
+        MatchupManualOut(
+            id=row.id,
+            week=row.week,
+            home_team_id=row.home_team_id,
+            home_team_name=names.get(row.home_team_id),
+            away_team_id=row.away_team_id,
+            away_team_name=names.get(row.away_team_id),
+            home_points=row.home_points,
+            away_points=row.away_points,
+            is_playoffs=bool(row.is_playoffs),
+            status=row.status,
+        )
+        for row in query.order_by(Matchup.week, Matchup.id).all()
+    ]
+
+
+@router.put(
+    "/leagues/{league_key}/matchups/{week}", response_model=list[MatchupManualOut]
+)
+def set_week_matchups(
+    league_key: str,
+    week: int,
+    payload: MatchupWeekSet,
+    db: Session = Depends(get_db),
+) -> list[MatchupManualOut]:
+    """Replace one week's matchups wholesale.
+
+    The body is the complete schedule for that week: whatever was stored
+    before is deleted first, so an edit is a re-PUT rather than a diff. A
+    matchup with both scores is stored as ``"final"`` and counts in the
+    standings; one with a missing score is ``"scheduled"`` and is treated as a
+    future game by the playoff simulator, which will use its pairing.
+    """
+    league = _get_manual_league(db, league_key)
+    _validated_week(week)
+
+    team_ids = {
+        team_id
+        for (team_id,) in db.query(Team.id).filter(Team.league_id == league.id)
+    }
+
+    seen: set[int] = set()
+    for entry in payload.matchups:
+        for team_id in (entry.home_team_id, entry.away_team_id):
+            if team_id is None:
+                continue
+            if team_id not in team_ids:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Team {team_id} is not in league {league.league_key}",
+                )
+            if team_id in seen:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Team {team_id} appears in more than one "
+                        f"week {week} matchup"
+                    ),
+                )
+            seen.add(team_id)
+
+    db.query(Matchup).filter(
+        Matchup.league_id == league.id, Matchup.week == week
+    ).delete(synchronize_session=False)
+
+    for entry in payload.matchups:
+        final = entry.home_points is not None and entry.away_points is not None
+        db.add(
+            Matchup(
+                league_id=league.id,
+                week=week,
+                home_team_id=entry.home_team_id,
+                away_team_id=entry.away_team_id,
+                home_points=entry.home_points,
+                away_points=entry.away_points,
+                is_playoffs=False,
+                status="final" if final else "scheduled",
+            )
+        )
+    db.commit()
+
+    return _matchup_rows(db, league, week)
+
+
+@router.get("/leagues/{league_key}/matchups", response_model=list[MatchupManualOut])
+def list_matchups(
+    league_key: str,
+    week: int | None = Query(default=None, description="Omit for every week."),
+    db: Session = Depends(get_db),
+) -> list[MatchupManualOut]:
+    league = _get_manual_league(db, league_key)
+    return _matchup_rows(db, league, week)
+
+
+@router.delete("/leagues/{league_key}/matchups/{week}", status_code=204)
+def clear_week_matchups(
+    league_key: str, week: int, db: Session = Depends(get_db)
+) -> Response:
+    """Delete every matchup stored for one week."""
+    league = _get_manual_league(db, league_key)
+    _validated_week(week)
+
+    db.query(Matchup).filter(
+        Matchup.league_id == league.id, Matchup.week == week
     ).delete(synchronize_session=False)
     db.commit()
     return Response(status_code=204)
