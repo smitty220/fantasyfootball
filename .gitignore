@@ -22,6 +22,10 @@ data/*.db
 data/*.sqlite
 data/*.sqlite3
 
+# Home Assistant add-on build staging (produced by deploy/build-addon.sh —
+# a copy of backend/ + frontend/ placed inside the add-on's build context)
+addons/gridironhq/app/
+
 # OS
 .DS_Store
 

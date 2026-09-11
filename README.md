@@ -87,6 +87,21 @@ reads it directly, relative to its `backend/` working directory) and Docker
 Compose (which bind-mounts this exact path into the container — see
 `docker-compose.yml`), so there's never a second copy to keep in sync.
 
+## Home Assistant OS deployment (local add-on)
+
+If the Pi runs Home Assistant OS, Gridiron HQ installs as a **local add-on**
+instead — HAOS owns Docker, so there's no Compose involved. `addons/gridironhq/`
+holds the add-on manifest, Dockerfile and entrypoint; `deploy/build-addon.sh`
+stages `backend/` and `frontend/` inside it (the Supervisor builds a local
+add-on with the add-on folder as the whole build context), after which the
+folder is copied into HAOS's `/addons` share and installed from the Add-on
+Store. Credentials come from the add-on's options page rather than
+`secrets.env`, and the database lives in `/addon_configs/local_gridironhq/`
+where the Samba add-on can reach it.
+
+Full walkthrough: **[deploy/pi-setup.md](deploy/pi-setup.md#home-assistant-os-add-on)**;
+add-on-specific notes in [addons/gridironhq/DOCS.md](addons/gridironhq/DOCS.md).
+
 ## Raspberry Pi deployment (Docker Compose + Tailscale Funnel)
 
 The app ships as a single container: a multi-stage `backend/Dockerfile`

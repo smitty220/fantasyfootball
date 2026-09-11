@@ -1,0 +1,86 @@
+# Home Assistant add-on manifest for Gridiron HQ.
+#
+# Schema reference (verified Sept 2026):
+# https://developers.home-assistant.io/docs/add-ons/configuration
+#
+# This add-on is built ON the Home Assistant machine from the Dockerfile next
+# to this file, so there is deliberately NO `image:` key — `image:` is only for
+# add-ons whose containers are pulled from a registry.
+name: Gridiron HQ
+version: "1.0.0"
+slug: gridironhq
+description: >-
+  Self-hosted fantasy football helper: Yahoo league sync, free-agent browser,
+  trade analyzer, matchup preview and lineup editor, backed by a local SQLite
+  database.
+url: https://github.com/smitty220/fantasyfootball
+
+# Raspberry Pi 4/5 running HAOS is aarch64; amd64 covers a NUC/VM install.
+arch:
+  - aarch64
+  - amd64
+
+# `services` starts the add-on before Home Assistant core; this app is
+# independent of core, and starting early means it's already serving by the
+# time the dashboard is up.
+startup: services
+boot: auto
+
+# Stop the container before a Home Assistant backup runs, so the SQLite
+# database is copied at rest rather than mid-write.
+backup: cold
+
+ports:
+  8000/tcp: 8000
+ports_description:
+  8000/tcp: Gridiron HQ web UI and API
+
+# [HOST] and [PORT:8000] are substituted by Home Assistant — 8000 is the
+# *internal* port, and the link is rewritten to whatever host port is mapped
+# above. Renders the "OPEN WEB UI" button on the add-on page.
+webui: http://[HOST]:[PORT:8000]
+
+# Supervisor polls this and marks the add-on unhealthy / restarts it if it
+# stops answering.
+watchdog: http://[HOST]:[PORT:8000]/api/health
+
+# Persistent storage for the SQLite database, its dated backups, and the
+# HTTP caches. `addon_config` is the add-on's own folder on the host
+# (/addon_configs/<slug>), which the Samba add-on exposes as the
+# "addon_configs" share — so you can drag app.db in from a Mac in Finder.
+#
+# The `path` property relocates the mount to /app/data, which is where the
+# application already expects its data directory to be. run.py double-checks
+# this at startup and symlinks /app/data itself if a Supervisor version mounts
+# the folder somewhere else.
+#
+# (On a Supervisor too old for this list-of-dicts form, the legacy equivalent
+# is `map: ["addon_config:rw"]`, which mounts the folder at /config instead —
+# run.py handles that case too.)
+map:
+  - type: addon_config
+    read_only: false
+    path: /app/data
+
+options:
+  owner_password: ""
+  league_password: ""
+  session_secret: ""
+  fantasypros_api_key: ""
+  yahoo_client_id: ""
+  yahoo_client_secret: ""
+  yahoo_redirect_uri: https://localhost:8000/api/auth/yahoo/callback
+  scheduler_enabled: true
+
+# Every field is optional (trailing `?`) so the add-on starts on a fresh
+# install and can be filled in from the UI afterwards. `password` renders a
+# masked input in the add-on configuration panel.
+schema:
+  owner_password: password?
+  league_password: password?
+  session_secret: password?
+  fantasypros_api_key: password?
+  yahoo_client_id: password?
+  yahoo_client_secret: password?
+  yahoo_redirect_uri: str?
+  scheduler_enabled: bool?
