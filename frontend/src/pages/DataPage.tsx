@@ -49,6 +49,11 @@ const SOURCES: { id: DataSourceId; name: string; description: string }[] = [
     description: 'Current-week expert-consensus projections (requires API key).',
   },
   {
+    id: 'yahoo_access_check',
+    name: 'Yahoo API access',
+    description: 'Probes whether Yahoo has activated Fantasy API access for our app yet.',
+  },
+  {
     id: 'nfl_actuals',
     name: 'NFL actual stats',
     description: 'Real weekly player results from nflverse; powers the Accuracy page.',
@@ -74,6 +79,7 @@ const REFRESH_INTERVAL_LABEL: Record<DataSourceId, string> = {
   fantasypros_week_projections: '1h',
   nfl_schedule: 'week',
   nfl_actuals: '2x week',
+  yahoo_access_check: '6h',
 }
 
 function formatCountdown(nextRunAt: string | null | undefined): string | null {

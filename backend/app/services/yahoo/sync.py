@@ -782,3 +782,35 @@ def sync_league(db: Session, league_key: str) -> dict:
             }
         finally:
             sc.close()
+
+
+def check_api_access(db: Session) -> str:
+    """Probe whether Yahoo's Fantasy API gate is open for our app.
+
+    Yahoo's 2026 access program approves apps asynchronously; until the
+    approval binds to the consumer key, every Fantasy endpoint answers
+    ``additional_authorization_required``. This cheap probe (one request to
+    the public NFL game resource) logs the current state so the Data page
+    shows the moment access goes live.
+    """
+    with _sync_log(db, "yahoo_access_check") as log:
+        from app.services.yahoo.session import make_session_context
+
+        with make_session_context(db) as sc:
+            response = sc.session.get(
+                "https://fantasysports.yahooapis.com/fantasy/v2/game/nfl",
+                params={"format": "json"},
+            )
+        if response.status_code == 200:
+            log.message = "ACCESS LIVE - Yahoo Fantasy API responds; run league discovery!"
+        else:
+            body = response.content.decode("utf-8", "replace")[:200]
+            log.status = "error"
+            if "additional_authorization_required" in body:
+                log.message = (
+                    "Approval gate still closed (additional_authorization_required); "
+                    "waiting on Yahoo to activate the app."
+                )
+            else:
+                log.message = f"HTTP {response.status_code}: {body}"
+        return log.message

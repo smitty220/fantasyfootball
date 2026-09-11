@@ -277,6 +277,7 @@ export type DataSourceId =
   | 'fantasypros_week_projections'
   | 'nfl_schedule'
   | 'nfl_actuals'
+  | 'yahoo_access_check'
 
 export type ProjectionSourceId = 'fantasypros' | 'espn'
 

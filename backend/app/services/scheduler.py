@@ -40,6 +40,7 @@ MISFIRE_GRACE_TIME = 60 * 60
 #: process boot; cron jobs are naturally staggered by their hour/minute.
 _JOB_SPECS: dict[str, Callable[[], object]] = {
     "sleeper_trending": lambda: IntervalTrigger(hours=6, start_date=_offset(minutes=5)),
+    "yahoo_access_check": lambda: IntervalTrigger(hours=6, start_date=_offset(minutes=8)),
     "sleeper_players": lambda: CronTrigger(hour=1, minute=0),
     "fantasycalc": lambda: CronTrigger(hour=1, minute=15),
     "espn_projections": lambda: IntervalTrigger(hours=6, start_date=_offset(minutes=10)),
