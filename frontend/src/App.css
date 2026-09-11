@@ -1835,3 +1835,27 @@ a.tab {
   font-size: 13px;
   line-height: 1.2;
 }
+
+/* Home page: one full lineup board per league, side by side on wide screens. */
+.home-roster-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+@media (min-width: 1250px) {
+  .home-roster-grid {
+    grid-template-columns: 1fr 1fr;
+    align-items: start;
+  }
+}
+.home-roster-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+/* Pages that need the full viewport (side-by-side league rosters). */
+.app-main:has(.page-wide) {
+  max-width: 1600px;
+}
