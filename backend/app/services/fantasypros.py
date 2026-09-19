@@ -249,7 +249,10 @@ def _fetch_position(
     if ros:
         # FantasyPros' expert rest-of-season mode (news-aware, remaining games
         # only). Probed per refresh; empty until FP publishes it in-season.
+        # ``week=0`` is required: without it, the in-season default horizon is
+        # the *current week*, which silently hands back single-game numbers.
         params["ros"] = "true"
+        params["week"] = 0
     else:
         params["week"] = week if week is not None else 0
 
@@ -366,6 +369,23 @@ def refresh_projections(db: Session, season: int, week: int | None = None) -> di
 
                 db.commit()
 
+        # Players FP dropped from the feed (ruled out, IR, released) would
+        # otherwise keep their last-fetched line forever; a completed pull is
+        # the authoritative roster of who has a projection at this horizon.
+        pruned = 0
+        if saved:
+            pruned = (
+                db.query(Projection)
+                .filter(
+                    Projection.source == SOURCE,
+                    Projection.season == season,
+                    Projection.week.is_(None) if week is None else Projection.week == week,
+                    Projection.fetched_at < fetched_at,
+                )
+                .delete(synchronize_session=False)
+            )
+            db.commit()
+
         if week is None:
             week_label = (
                 "ROS (expert rest-of-season mode)"
@@ -378,7 +398,7 @@ def refresh_projections(db: Session, season: int, week: int | None = None) -> di
             f"season {season} {week_label}: {saved} projection(s) saved across "
             f"positions {per_position} ({matched_by_id} by fantasypros_id, "
             f"{matched_by_name} by name, {unmatched} unmatched, {no_projection} "
-            "with no projection line)"
+            f"with no projection line, {pruned} stale row(s) pruned)"
         )
         return {
             "season": season,

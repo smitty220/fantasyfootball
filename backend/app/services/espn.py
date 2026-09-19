@@ -463,11 +463,29 @@ def refresh_projections(
                     break
                 time.sleep(PAGE_DELAY_SECONDS)
 
+        # Players ESPN dropped from the feed (ruled out, IR, released) would
+        # otherwise keep their last-fetched line forever; a completed pull is
+        # the authoritative roster of who has a projection at this horizon.
+        pruned = 0
+        if saved:
+            pruned = (
+                db.query(Projection)
+                .filter(
+                    Projection.source == SOURCE,
+                    Projection.season == season,
+                    Projection.week.is_(None) if week is None else Projection.week == week,
+                    Projection.fetched_at < fetched_at,
+                )
+                .delete(synchronize_session=False)
+            )
+            db.commit()
+
         week_label = "ROS/season" if week is None else f"week {week}"
         log.message = (
             f"season {season} {week_label}: {saved} projection(s) saved across "
             f"{pages} page(s) ({matched_by_id} by espn_id, {matched_by_name} by "
-            f"name, {unmatched} unmatched, {no_projection} with no projection line)"
+            f"name, {unmatched} unmatched, {no_projection} with no projection line, "
+            f"{pruned} stale row(s) pruned)"
         )
         return {
             "season": season,
