@@ -17,7 +17,7 @@ RUN npm run build
 # though the file is right there — the shebang points at the old path.
 FROM python:3.12-slim AS backend-build
 WORKDIR /app/backend
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.12.17 /uv /usr/local/bin/uv
 COPY backend/pyproject.toml backend/uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 

@@ -1,25 +1,31 @@
+# Compose project name is pinned so this stack can share a Docker host with
+# other stacks (one compose project per directory under /opt/stacks).
+name: fantasy-football
+
 services:
   app:
     build:
       context: .
       dockerfile: backend/Dockerfile
-    image: gridiron-hq:latest
+    # Tagged with the app version rather than :latest so a rebuild that goes
+    # wrong leaves the previous image identifiable and re-taggable.
+    image: gridiron-hq:0.1.0
     container_name: gridiron-hq
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      # Host 8090 — 8000 and 8080 are taken by other services on the box.
+      - "8090:8000"
     environment:
       DATABASE_URL: sqlite:////app/data/app.db
       # SCHEDULER_ENABLED: "true"  # set to "false" to disable background auto-refresh
     volumes:
       - ./data:/app/data
-      # Canonical secrets file: backend/secrets.env — the same file (same
-      # path, relative to the backend/ working directory) that `uv run`
-      # dev reads directly off disk. Bind-mounting it in at the identical
-      # relative location (container WORKDIR is /app/backend) means
-      # app.config.Settings picks it up with no compose `env_file:` entry
-      # and no second copy to keep in sync. See README.md / deploy/pi-setup.md.
-      - ./backend/secrets.env:/app/backend/secrets.env:ro
+      # Secrets live in one mode-600 .env beside this file and are mounted at
+      # the path app.config.Settings reads (container WORKDIR is /app/backend),
+      # so there is no second copy to keep in sync and nothing baked into the
+      # image. Local non-Docker dev reads backend/secrets.env directly instead.
+      # See README.md / deploy/server-setup.md.
+      - ./.env:/app/backend/secrets.env:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 30s

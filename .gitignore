@@ -34,3 +34,6 @@ addons/gridironhq/app/
 .idea/
 data/cache/
 secrets.env
+
+# Dated SQLite copies the app writes on every start
+data/backups/
