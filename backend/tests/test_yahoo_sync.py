@@ -303,6 +303,62 @@ def test_free_agent_sync_flips_status_on_repeat(db_session, league):
 # --------------------------------------------------------------------------- #
 
 
+class FakeSettingsLeague:
+    def __init__(self, settings: dict, positions: dict | None = None) -> None:
+        self._settings = settings
+        self._positions = positions or {}
+
+    def settings(self):
+        return self._settings
+
+    def positions(self):
+        return self._positions
+
+
+#: The keeper league's settings as Yahoo returned them (2026-10-10).
+KEEPER_POSITIONS = {
+    "QB": {"position_type": "O", "count": 1, "is_starting_position": 1},
+    "RB": {"position_type": "O", "count": 2, "is_starting_position": 1},
+    "WR": {"position_type": "O", "count": 2, "is_starting_position": 1},
+    "TE": {"position_type": "O", "count": 1, "is_starting_position": 1},
+    "W/R/T": {"position_type": "O", "count": 1, "is_starting_position": 1},
+    "K": {"position_type": "K", "count": 1, "is_starting_position": 1},
+    "DEF": {"position_type": "DT", "count": 1, "is_starting_position": 1},
+    "BN": {"count": 5, "is_starting_position": 0},
+    "IR": {"count": 1, "is_starting_position": 0},
+}
+
+
+def test_upsert_league_stores_yahoo_roster_slots_and_scoring(db_session, league):
+    from app.services import evaluator
+
+    sync._upsert_league(
+        db_session,
+        league.league_key,
+        FakeSettingsLeague(
+            {
+                "name": "Keepers",
+                "stat_modifiers": {
+                    "stats": [
+                        {"stat": {"stat_id": 11, "value": "1"}},
+                        {"stat": {"stat_id": 4, "value": "0.05"}},
+                    ]
+                },
+            },
+            KEEPER_POSITIONS,
+        ),
+    )
+    db_session.commit()
+
+    refreshed = db_session.query(League).one()
+    assert evaluator.starting_slot_counts(evaluator.league_roster_slots(refreshed)) == {
+        "QB": 1, "RB": 2, "WR": 2, "TE": 1, "FLEX": 1, "K": 1, "DEF": 1,
+    }
+    assert refreshed.settings_json["roster_slots"]["BN"] == 5
+    rules = refreshed.settings_json["scoring_rules"]["per_stat"]
+    assert rules["rec"] == 1.0 and rules["pass_yds"] == 0.05
+
+
 def test_upsert_league_preserves_is_keeper(db_session, league):
     league.is_keeper = True
     db_session.commit()
@@ -310,14 +366,16 @@ def test_upsert_league_preserves_is_keeper(db_session, league):
     sync._upsert_league(
         db_session,
         league.league_key,
-        {
-            "name": "Renamed League",
-            "season": "2026",
-            "num_teams": "10",
-            "scoring_type": "headpoint",
-            "current_week": "4",
-            "game_code": "nfl",
-        },
+        FakeSettingsLeague(
+            {
+                "name": "Renamed League",
+                "season": "2026",
+                "num_teams": "10",
+                "scoring_type": "headpoint",
+                "current_week": "4",
+                "game_code": "nfl",
+            }
+        ),
     )
     db_session.commit()
 

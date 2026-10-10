@@ -29,7 +29,7 @@ from app.models import (
     SyncLog,
     Team,
 )
-from app.services import matching
+from app.services import matching, scoring
 from app.services.yahoo.session import make_session_context
 
 logger = logging.getLogger(__name__)
@@ -280,7 +280,18 @@ def _upsert_league_player(
 # --------------------------------------------------------------------------- #
 
 
-def _upsert_league(db: Session, league_key: str, lg_settings: dict) -> League:
+def _roster_slots(lg) -> dict[str, int]:
+    """The league's roster positions as ``{slot: count}``, Yahoo labels kept
+    (``W/R/T``, ``Q/W/R/T``, ``BN``, ``IR``; the evaluator normalizes them)."""
+    return {
+        str(position): int(info.get("count", 0))
+        for position, info in lg.positions().items()
+        if int(info.get("count", 0))
+    }
+
+
+def _upsert_league(db: Session, league_key: str, lg) -> League:
+    lg_settings = lg.settings()
     league = db.query(League).filter(League.league_key == league_key).one_or_none()
     if league is None:
         league = League(league_key=league_key)
@@ -292,7 +303,12 @@ def _upsert_league(db: Session, league_key: str, lg_settings: dict) -> League:
     league.num_teams = _to_int(lg_settings.get("num_teams")) or league.num_teams
     league.scoring_type = lg_settings.get("scoring_type") or league.scoring_type
     league.current_week = _to_int(lg_settings.get("current_week")) or league.current_week
-    league.settings_json = _jsonable(lg_settings)
+    settings = _jsonable(lg_settings)
+    # Derived from Yahoo on every sync, in the shapes the evaluator and the
+    # scoring engine read (see evaluator.league_roster_slots / scoring).
+    settings["roster_slots"] = _roster_slots(lg)
+    settings["scoring_rules"] = scoring.rules_from_yahoo(lg_settings.get("stat_modifiers"))
+    league.settings_json = settings
     league.synced_at = _utcnow()
     # is_keeper is deliberately untouched: the owner flags keeper leagues by hand.
     db.flush()
@@ -313,7 +329,7 @@ def discover_leagues(db: Session) -> list[League]:
             leagues: list[League] = []
             for league_key in league_keys:
                 lg = game.to_league(league_key)
-                leagues.append(_upsert_league(db, league_key, lg.settings()))
+                leagues.append(_upsert_league(db, league_key, lg))
             db.commit()
 
             log.message = f"season {season}: {len(leagues)} league(s)"
@@ -348,7 +364,7 @@ def _logo_url(team_data: dict) -> str | None:
 
 
 def _sync_settings(db: Session, league_key: str, lg) -> League:
-    league = _upsert_league(db, league_key, lg.settings())
+    league = _upsert_league(db, league_key, lg)
     db.commit()
     return league
 
