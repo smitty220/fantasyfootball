@@ -41,7 +41,7 @@ def _add(db, league, team, name, position, points, value):
     player = make_player(db, name, position, points)
     roster(db, league, team, player)
     if value is not None:
-        set_value(db, player, value)
+        set_value(db, league, player, value)
     return player
 
 
@@ -455,7 +455,7 @@ def test_a_full_ten_team_league_is_fast(db_session):
                 db_session, f"P{index}-{seat}", position, points
             )
             roster(db_session, league, team, player)
-            set_value(db_session, player, round(points * rng.uniform(15, 25), 1))
+            set_value(db_session, league, player, round(points * rng.uniform(15, 25), 1))
     db_session.commit()
 
     start = time.perf_counter()

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.models import League, LeaguePlayer, Matchup, Player, Team, TradeValue
+from app.services import fantasycalc
 from app.services.yahoo import oauth, sync
 
 router = APIRouter(prefix="/api/leagues", tags=["leagues"])
@@ -171,7 +172,7 @@ def _manual_free_agents(
             TradeValue,
             (TradeValue.player_id == Player.id)
             & (TradeValue.source == "fantasycalc")
-            & (TradeValue.format == "redraft"),
+            & (TradeValue.format == fantasycalc.trade_format(league)),
         )
         .filter(Player.position.in_(_FANTASY_POSITIONS))
         .filter(~Player.id.in_(rostered_ids))

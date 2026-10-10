@@ -67,7 +67,7 @@ from app.models import (
     TradeValue,
     TrendingSignal,
 )
-from app.services import scoring
+from app.services import fantasycalc, scoring
 from app.services.yahoo.sync import current_nfl_season
 
 #: Projection sources we trust, best first.
@@ -1291,7 +1291,7 @@ def evaluate_free_agents(
         .filter(
             TradeValue.player_id.in_(player_ids),
             TradeValue.source == TRADE_VALUE_SOURCE,
-            TradeValue.format == "redraft",
+            TradeValue.format == fantasycalc.trade_format(league, dynasty=False),
         )
         .all()
     }
@@ -1592,17 +1592,20 @@ def evaluate_trade(
     )
     points = {pid: projected.get(pid, 0.0) for pid in all_ids}
     positions = {pid: player.position for pid, player in players.items()}
+    redraft_format = fantasycalc.trade_format(league, dynasty=False)
+    dynasty_format = fantasycalc.trade_format(league, dynasty=True)
     values: dict[str, dict[int, float]] = {"redraft": {}, "dynasty": {}}
+    kinds = {redraft_format: "redraft", dynasty_format: "dynasty"}
     for row in (
         db.query(TradeValue)
         .filter(
             TradeValue.player_id.in_(sorted(all_ids)),
             TradeValue.source == TRADE_VALUE_SOURCE,
+            TradeValue.format.in_(list(kinds)),
         )
         .all()
     ):
-        if row.format in values:
-            values[row.format][row.player_id] = row.value
+        values[kinds[row.format]][row.player_id] = row.value
 
     roster_slots = league_roster_slots(league)
     notes: list[str] = []

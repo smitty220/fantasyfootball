@@ -35,9 +35,9 @@ def seeded(db_session):
     fa_rb = make_player(db_session, "Hot RB", "RB", 100)
     make_player(db_session, "Quiet WR", "WR", 40)
 
-    set_value(db_session, a_star, 5000)
-    set_value(db_session, b_star, 500)
-    set_value(db_session, fa_rb, 900)
+    set_value(db_session, league, a_star, 5000)
+    set_value(db_session, league, b_star, 500)
+    set_value(db_session, league, fa_rb, 900)
     db_session.commit()
 
     return league, {"team_a": team_a, "team_b": team_b, "a_star": a_star, "b_star": b_star}

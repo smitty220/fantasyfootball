@@ -43,7 +43,7 @@ from typing import Iterable, Mapping, NamedTuple, Sequence
 from sqlalchemy.orm import Session
 
 from app.models import League, LeaguePlayer, Player, Team, TradeValue
-from app.services import evaluator, scoring
+from app.services import evaluator, fantasycalc, scoring
 from app.services.yahoo.sync import current_nfl_season
 
 #: Positions a suggestion may move. K/DEF are excluded on purpose -- see above.
@@ -236,7 +236,7 @@ def find_trades(
         .filter(
             TradeValue.player_id.in_(all_ids),
             TradeValue.source == evaluator.TRADE_VALUE_SOURCE,
-            TradeValue.format == "redraft",
+            TradeValue.format == fantasycalc.trade_format(league, dynasty=False),
         )
         .all()
     }

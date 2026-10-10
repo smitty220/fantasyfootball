@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import pytest
 
 from app.models import Player, TradeValue
+from app.services import fantasycalc
 
 
 def _utcnow():
@@ -28,14 +29,14 @@ def seeded_players(db_session):
             TradeValue(
                 player_id=high.id,
                 source="fantasycalc",
-                format="redraft",
+                format=fantasycalc.DEFAULT_PROFILE.label(False),
                 value=9000,
                 fetched_at=_utcnow(),
             ),
             TradeValue(
                 player_id=low.id,
                 source="fantasycalc",
-                format="redraft",
+                format=fantasycalc.DEFAULT_PROFILE.label(False),
                 value=4000,
                 fetched_at=_utcnow(),
             ),
@@ -43,7 +44,7 @@ def seeded_players(db_session):
             TradeValue(
                 player_id=none.id,
                 source="fantasycalc",
-                format="dynasty",
+                format=fantasycalc.DEFAULT_PROFILE.label(True),
                 value=9999,
                 fetched_at=_utcnow(),
             ),

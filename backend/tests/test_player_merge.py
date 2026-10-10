@@ -12,7 +12,7 @@ from app.models import (
     Team,
     TradeValue,
 )
-from app.services import player_merge
+from app.services import fantasycalc, player_merge
 from tests.conftest import utcnow
 
 
@@ -78,7 +78,7 @@ def test_merge_moves_league_data_keeps_projections_and_adopts_yahoo_id(db_sessio
             DraftPick(league_id=league.id, round=1, pick=3, team_id=team.id, player_id=dup.id),
             Projection(player_id=keep.id, source="fantasypros", season=2026, week=None,
                        stat_json={"rush_yds": 900}, fetched_at=utcnow()),
-            TradeValue(player_id=keep.id, source="fantasycalc", format="redraft", value=6350.0,
+            TradeValue(player_id=keep.id, source="fantasycalc", format=fantasycalc.DEFAULT_PROFILE.label(False), value=6350.0,
                        fetched_at=utcnow()),
         ]
     )

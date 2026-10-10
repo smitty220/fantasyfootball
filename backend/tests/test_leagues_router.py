@@ -7,6 +7,7 @@ import pytest
 from datetime import datetime, timezone
 
 from app.models import League, LeaguePlayer, Matchup, Player, Team, TradeValue
+from app.services import fantasycalc
 from app.services.yahoo import oauth, sync
 
 
@@ -257,14 +258,14 @@ def manual_seeded(db_session) -> League:
             TradeValue(
                 player_id=high_value_fa.id,
                 source="fantasycalc",
-                format="redraft",
+                format=fantasycalc.trade_format(league),
                 value=5000,
                 fetched_at=_utcnow(),
             ),
             TradeValue(
                 player_id=low_value_fa.id,
                 source="fantasycalc",
-                format="redraft",
+                format=fantasycalc.trade_format(league),
                 value=1000,
                 fetched_at=_utcnow(),
             ),

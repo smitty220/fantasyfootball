@@ -15,7 +15,7 @@ from app.models import (
     Team,
     TradeValue,
 )
-from app.services import evaluator
+from app.services import evaluator, fantasycalc
 from app.services.paste_import import parse_roster_paste
 
 # A copy/paste of Yahoo's "League > Rosters" page: preamble junk, two teams,
@@ -578,7 +578,7 @@ def test_same_name_players_prefer_the_one_with_a_trade_value(
         TradeValue(
             player_id=starter.id,
             source=evaluator.TRADE_VALUE_SOURCE,
-            format="redraft",
+            format=fantasycalc.DEFAULT_PROFILE.label(False),
             value=1200.0,
             fetched_at=datetime(2026, 9, 1),
         )

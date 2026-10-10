@@ -213,7 +213,7 @@ def _build_index(db: Session) -> _PlayerIndex:
         row.player_id
         for row in db.query(TradeValue.player_id).filter(
             TradeValue.source == evaluator.TRADE_VALUE_SOURCE,
-            TradeValue.format == "redraft",
+            TradeValue.format.like("redraft:%"),
         )
     }
     projected_ids = {row.player_id for row in db.query(Projection.player_id).distinct()}

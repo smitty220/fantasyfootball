@@ -393,8 +393,8 @@ def blend_trade_league(db_session):
     b_rb = make_player(db_session, "B RB", "RB", 40)
     roster(db_session, league, team_b, b_qb, b_wr, b_rb)
 
-    set_value(db_session, a_rb, 5000)
-    set_value(db_session, b_wr, 5000)
+    set_value(db_session, league, a_rb, 5000)
+    set_value(db_session, league, b_wr, 5000)
     db_session.commit()
     return league, {"team_a": team_a, "team_b": team_b, "a_rb": a_rb, "b_wr": b_wr}
 

@@ -26,12 +26,12 @@ import logging
 import re
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Iterator
+from typing import Iterator, NamedTuple
 
 import httpx
 from sqlalchemy.orm import Session
 
-from app.models import Player, SyncLog, TradeValue
+from app.models import League, Player, SyncLog, TradeValue
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +39,57 @@ VALUES_URL = "https://api.fantasycalc.com/values/current"
 
 SOURCE = "fantasycalc"
 
-#: (isDynasty, format label) pairs to fetch.
-FORMATS = ((False, "redraft"), (True, "dynasty"))
+#: Which FantasyCalc value sets to fetch: the ``isDynasty`` flag and its label.
+MODES = ((False, "redraft"), (True, "dynasty"))
+
+_PPR_STEPS = (0.0, 0.5, 1.0)
+
+
+class Profile(NamedTuple):
+    """The league traits FantasyCalc prices a player against."""
+
+    num_teams: int = 12
+    num_qbs: int = 1
+    ppr: float = 1.0
+
+    def label(self, dynasty: bool) -> str:
+        """``TradeValue.format`` string, e.g. ``redraft:10:2:1`` or
+        ``dynasty:12:1:0.5`` (teams:QBs:PPR; at most 16 chars, the column width)."""
+        mode = "dynasty" if dynasty else "redraft"
+        return f"{mode}:{self.num_teams}:{self.num_qbs}:{self.ppr:g}"
+
+
+DEFAULT_PROFILE = Profile()
+
+
+def league_profile(league: League | None) -> Profile:
+    """Derive a league's FantasyCalc profile from its stored settings."""
+    if league is None:
+        return DEFAULT_PROFILE
+    from app.services import evaluator, scoring  # lazy: evaluator imports this module
+
+    num_teams = league.num_teams or DEFAULT_PROFILE.num_teams
+    slots = evaluator.league_roster_slots(league) if league.settings_json else {}
+    qb_seats = 0
+    superflex = False
+    for raw, count in slots.items():
+        label = evaluator.normalize_slot(raw)
+        if label == "SUPERFLEX" and count:
+            superflex = True
+        elif label == "QB":
+            qb_seats += count
+    num_qbs = 2 if superflex or qb_seats > 1 else 1
+
+    rules = scoring.league_rules(league.settings_json)
+    rec = float((rules.get("per_stat") or {}).get("rec", 0.5))
+    ppr = min(_PPR_STEPS, key=lambda step: abs(step - rec))
+    return Profile(int(num_teams), num_qbs, ppr)
+
+
+def trade_format(league: League | None, dynasty: bool = False) -> str:
+    """The ``TradeValue.format`` a league's consumers should read."""
+    return league_profile(league).label(dynasty)
+
 
 _SUFFIXES = {"jr", "sr", "ii", "iii", "iv"}
 _PUNCTUATION_RE = re.compile(r"[.'’]")
@@ -77,14 +126,14 @@ def _sync_log(db: Session, resource: str) -> Iterator[SyncLog]:
         db.commit()
 
 
-def _fetch_values(is_dynasty: bool) -> list[dict]:
+def _fetch_values(is_dynasty: bool, profile: Profile = DEFAULT_PROFILE) -> list[dict]:
     response = httpx.get(
         VALUES_URL,
         params={
             "isDynasty": "true" if is_dynasty else "false",
-            "numQbs": 1,
-            "numTeams": 12,
-            "ppr": 1,
+            "numQbs": profile.num_qbs,
+            "numTeams": profile.num_teams,
+            "ppr": profile.ppr,
         },
         timeout=30,
     )
@@ -133,31 +182,56 @@ def _upsert_trade_value(
 
 
 def refresh_trade_values(db: Session) -> str:
-    """Pull redraft + dynasty trade values from FantasyCalc."""
+    """Pull redraft + dynasty values for every distinct league profile.
+
+    Values for profiles no league uses any more are deleted.
+    """
     with _sync_log(db, "fantasycalc") as log:
         fetched_at = _utcnow()
         summary: list[str] = []
 
-        for is_dynasty, format_label in FORMATS:
-            entries = _fetch_values(is_dynasty)
-            matched = 0
-            unmatched = 0
+        profiles = sorted(
+            {league_profile(league) for league in db.query(League).all()}
+        ) or [DEFAULT_PROFILE]
+        keep_labels: set[str] = set()
 
-            for entry in entries:
-                player_info = entry.get("player") or {}
-                if player_info.get("position") == "PICK":
-                    continue  # a future draft pick, not a real player
+        for profile in profiles:
+            for is_dynasty, _mode in MODES:
+                format_label = profile.label(is_dynasty)
+                keep_labels.add(format_label)
+                entries = _fetch_values(is_dynasty, profile)
+                matched = 0
+                unmatched = 0
 
-                player = _match_player(db, player_info)
-                if player is None:
-                    unmatched += 1
-                    continue
+                for entry in entries:
+                    player_info = entry.get("player") or {}
+                    if player_info.get("position") == "PICK":
+                        continue  # a future draft pick, not a real player
 
-                _upsert_trade_value(db, player, format_label, entry, fetched_at)
-                matched += 1
+                    player = _match_player(db, player_info)
+                    if player is None:
+                        unmatched += 1
+                        continue
 
-            db.commit()
-            summary.append(f"{format_label}: {matched} matched, {unmatched} unmatched")
+                    _upsert_trade_value(db, player, format_label, entry, fetched_at)
+                    matched += 1
+
+                db.commit()
+                summary.append(
+                    f"{format_label}: {matched} matched, {unmatched} unmatched"
+                )
+
+        removed = (
+            db.query(TradeValue)
+            .filter(
+                TradeValue.source == SOURCE,
+                TradeValue.format.notin_(sorted(keep_labels)),
+            )
+            .delete(synchronize_session=False)
+        )
+        db.commit()
+        if removed:
+            summary.append(f"removed {removed} stale rows")
 
         log.message = "; ".join(summary)
         return log.message

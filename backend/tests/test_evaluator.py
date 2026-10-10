@@ -16,7 +16,7 @@ from app.models import (
     TradeValue,
     TrendingSignal,
 )
-from app.services import evaluator, scoring
+from app.services import evaluator, fantasycalc, scoring
 from app.services.yahoo.sync import current_nfl_season
 
 SEASON = current_nfl_season()
@@ -149,13 +149,20 @@ def roster(db, league: League, team: Team, *players: Player) -> None:
 
 
 def set_value(
-    db, player: Player, value: float, *, fmt: str = "redraft", source: str = "fantasycalc"
+    db,
+    league: League,
+    player: Player,
+    value: float,
+    *,
+    dynasty: bool = False,
+    source: str = "fantasycalc",
 ) -> None:
+    """Seed a FantasyCalc value in the format ``league`` reads."""
     db.add(
         TradeValue(
             player_id=player.id,
             source=source,
-            format=fmt,
+            format=fantasycalc.trade_format(league, dynasty),
             value=value,
             fetched_at=_utcnow(),
         )
@@ -408,7 +415,7 @@ def fa_league(db_session):
     fa_qb = make_player(db_session, "Backup QB", "QB", 250)
     make_player(db_session, "Deep Cut K", "K", None)
 
-    set_value(db_session, fa_rb, 2500)
+    set_value(db_session, league, fa_rb, 2500)
     db_session.add(
         TrendingSignal(
             player_id=fa_rb.id,
@@ -1369,12 +1376,12 @@ def trade_league(db_session):
     b_qb = make_player(db_session, "B QB", "QB", 280)
     roster(db_session, league, team_b, b_star, b_depth, b_qb)
 
-    set_value(db_session, a_star, 5000)
-    set_value(db_session, a_depth, 500)
-    set_value(db_session, b_star, 5000)
-    set_value(db_session, b_depth, 400)
-    set_value(db_session, a_star, 4000, fmt="dynasty")
-    set_value(db_session, b_star, 9000, fmt="dynasty")
+    set_value(db_session, league, a_star, 5000)
+    set_value(db_session, league, a_depth, 500)
+    set_value(db_session, league, b_star, 5000)
+    set_value(db_session, league, b_depth, 400)
+    set_value(db_session, league, a_star, 4000, dynasty=True)
+    set_value(db_session, league, b_star, 9000, dynasty=True)
 
     db_session.commit()
     return league, {
@@ -1431,7 +1438,8 @@ def test_trade_margin_within_ten_percent_is_still_fair(trade_league, db_session)
     league, f = trade_league
     # 4600 vs 5000 -> 8% margin.
     db_session.query(TradeValue).filter(
-        TradeValue.player_id == f["a_star"].id, TradeValue.format == "redraft"
+        TradeValue.player_id == f["a_star"].id,
+        TradeValue.format == fantasycalc.trade_format(league),
     ).update({"value": 4600})
     db_session.commit()
 
@@ -1625,3 +1633,36 @@ def test_trade_rejects_duplicate_player_within_a_side(trade_league, db_session):
             season=SEASON,
         )
     assert "same player twice" in str(exc.value)
+
+
+def test_trade_in_superflex_league_reads_superflex_values(db_session):
+    league = make_league(
+        db_session, roster_slots={**SMALL_SLOTS, "Q/W/R/T": 1}, num_teams=10
+    )
+    team_a = make_team(db_session, league, "Alpha", is_my_team=True)
+    team_b = make_team(db_session, league, "Bravo")
+    a_qb = make_player(db_session, "SF A QB", "QB", 300)
+    b_wr = make_player(db_session, "SF B WR", "WR", 190)
+    roster(db_session, league, team_a, a_qb)
+    roster(db_session, league, team_b, b_wr)
+    assert fantasycalc.trade_format(league) == "redraft:10:2:0.5"
+
+    # Values for a 1-QB profile say the QB is worth little; the superflex
+    # profile (what this league reads) says he is worth more than the WR.
+    for player, value in ((a_qb, 1000), (b_wr, 5000)):
+        db_session.add(
+            TradeValue(player_id=player.id, source="fantasycalc",
+                       format="redraft:10:1:0.5", value=value, fetched_at=_utcnow())
+        )
+    set_value(db_session, league, a_qb, 8000)
+    set_value(db_session, league, b_wr, 5000)
+    db_session.commit()
+
+    result = evaluator.evaluate_trade(
+        db_session,
+        league,
+        {"team_id": team_a.id, "player_ids": [a_qb.id]},
+        {"team_id": team_b.id, "player_ids": [b_wr.id]},
+        season=SEASON,
+    )
+    assert result["sides"]["a"]["players"][0]["value"] == 8000
