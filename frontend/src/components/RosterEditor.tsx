@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { DragEvent, KeyboardEvent, MouseEvent, ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -12,6 +12,7 @@ import {
 } from '../api/endpoints'
 import type {
   LineupAssignment,
+  LineupMode,
   LineupPlayer,
   LineupSlotEntry,
   PlayerSearchResult,
@@ -83,12 +84,14 @@ function isEligibleForSlot(position: string, slot: string): boolean {
 
 // Finds the best bench player eligible for a filled starting slot whose
 // week_points strictly beats the starter's — informational only, so it runs
-// in read-only mode too. Bench players with no week projection are ignored.
+// in read-only mode too. Bench players with no week projection, and Yahoo
+// IR/NA players (who can't start without a roster move), are ignored.
 function findBenchUpgrade(slot: string, occupantWeekPoints: number | null, bench: LineupPlayer[]): LineupPlayer | null {
   const occupant = occupantWeekPoints ?? -Infinity
   let best: LineupPlayer | null = null
   for (const p of bench) {
     if (p.week_points == null) continue
+    if (p.reserve) continue
     if (!isEligibleForSlot(p.position, slot)) continue
     if (p.week_points > occupant && (best == null || p.week_points > (best.week_points as number))) {
       best = p
@@ -112,11 +115,14 @@ export function RosterEditor({
   teamId,
   teamName,
   editable,
+  isYahoo = false,
 }: {
   leagueKey: string
   teamId: number
   teamName: string
   editable: boolean
+  /** Yahoo league: default to the lineup set in Yahoo, with an Optimal toggle. */
+  isYahoo?: boolean
 }) {
   const { showError, showSuccess } = useToast()
   const navigate = useNavigate()
@@ -132,6 +138,9 @@ export function RosterEditor({
   const [dragSource, setDragSource] = useState<MoveSource | null>(null)
   const [selectedSource, setSelectedSource] = useState<MoveSource | null>(null)
   const [sources, setSources] = useState<string[]>([])
+  // Yahoo leagues only; client-side, defaults back to Yahoo's lineup on remount.
+  const [lineupMode, setLineupMode] = useState<LineupMode>('actual')
+  const lineupRequest = useRef(0)
   const debouncedQuery = useDebouncedValue(query, 300)
 
   function loadRoster() {
@@ -144,11 +153,16 @@ export function RosterEditor({
   }
 
   function loadLineup(): Promise<void> {
-    return getTeamLineup(leagueKey, teamId, sources)
-      .then(setLineup)
+    // Only the latest request may land, so a quick toggle can't be overwritten
+    // by a slower earlier response.
+    const requestId = ++lineupRequest.current
+    return getTeamLineup(leagueKey, teamId, sources, isYahoo ? lineupMode : undefined)
+      .then((resp) => {
+        if (requestId === lineupRequest.current) setLineup(resp)
+      })
       .catch(() => {
         // Non-fatal: fall back to a plain roster listing without slot badges.
-        setLineup(null)
+        if (requestId === lineupRequest.current) setLineup(null)
       })
   }
 
@@ -165,7 +179,7 @@ export function RosterEditor({
   useEffect(() => {
     loadLineup()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sources])
+  }, [sources, lineupMode])
 
   useEffect(() => {
     if (!editable) return
@@ -501,7 +515,9 @@ export function RosterEditor({
         {player ? (
           renderPlayerCells(player, benchUpgrade)
         ) : (
-          <span className="lineup-row-empty-label">Drop a {slotEligibleHint(entry.slot)} here</span>
+          <span className="lineup-row-empty-label">
+            {editable ? `Drop a ${slotEligibleHint(entry.slot)} here` : 'Empty'}
+          </span>
         )}
       </div>
     )
@@ -527,21 +543,38 @@ export function RosterEditor({
           onClick={editable ? () => handleBenchCardClick(player) : undefined}
           onKeyDown={editable ? (e) => handleKeyActivate(e, () => handleBenchCardClick(player)) : undefined}
         >
-          <span className="lineup-row-chip lineup-row-chip-bench">BN</span>
+          <span
+            className="lineup-row-chip lineup-row-chip-bench"
+            title={player.reserve ? 'In an IR/NA slot in Yahoo' : undefined}
+          >
+            {player.reserve ? 'IR' : 'BN'}
+          </span>
           {renderPlayerCells(player)}
         </div>
       </li>
     )
   }
 
+  const showingYahoo = lineup?.source === 'yahoo'
+  let caption: string
+  if (editable) {
+    caption = 'Drag players into slots, or Auto-set for the projected-optimal lineup.'
+  } else if (showingYahoo) {
+    caption = 'Starters are the lineup set in Yahoo. ▼ bench marks a starter a bench player outprojects this week.'
+  } else if (isYahoo && lineupMode === 'actual' && lineup) {
+    caption = 'No Yahoo lineup synced for this week yet — showing the projected-optimal lineup.'
+  } else {
+    caption = 'Starters reflect the projected-optimal lineup.'
+  }
+
+  let sourceLabel = 'auto (optimal)'
+  if (lineup?.source === 'manual') sourceLabel = 'manual'
+  else if (showingYahoo) sourceLabel = 'Yahoo (as set)'
+
   return (
     <div className="roster-editor">
       <h3>{teamName} roster</h3>
-      <p className="field-hint roster-caption">
-        {editable
-          ? 'Drag players into slots, or Auto-set for the projected-optimal lineup.'
-          : 'Starters reflect the projected-optimal lineup.'}
-      </p>
+      <p className="field-hint roster-caption">{caption}</p>
 
       <SourcePicker onChange={setSources} />
 
@@ -556,9 +589,32 @@ export function RosterEditor({
       {roster !== null && roster.length > 0 && lineup && (
         <div className="lineup-editor">
           <div className="lineup-header">
-            <Badge tone={lineup.source === 'manual' ? 'accent' : 'neutral'}>
-              Lineup: {lineup.source === 'manual' ? 'manual' : 'auto (optimal)'}
-            </Badge>
+            <Badge tone={lineup.source === 'auto' ? 'neutral' : 'accent'}>Lineup: {sourceLabel}</Badge>
+            {isYahoo && (
+              <div
+                className="lineup-mode-toggle"
+                role="group"
+                aria-label="Lineup to show"
+                style={{ display: 'inline-flex', gap: 4 }}
+              >
+                {(
+                  [
+                    ['actual', 'Yahoo lineup'],
+                    ['optimal', 'Optimal'],
+                  ] as const
+                ).map(([mode, label]) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    className={`source-chip${lineupMode === mode ? ' source-chip-checked' : ''}`}
+                    aria-pressed={lineupMode === mode}
+                    onClick={() => setLineupMode(mode)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
             {lineup.week != null && <span className="field-hint">Week {lineup.week}</span>}
             {editable && (
               <Button variant="secondary" onClick={handleAutoSet} busy={autoSetting}>

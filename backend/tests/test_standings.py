@@ -173,7 +173,46 @@ def test_standings_of_a_league_with_no_teams(db_session):
     assert standings_service.league_standings(db_session, league) == []
 
 
+def test_preevent_and_midevent_rows_are_not_completed_games(
+    db_session, four_team_league
+):
+    league, (a, b, c, d) = four_team_league
+    add_matchup(db_session, league, 1, a, b, 100.0, 90.0)
+    future = add_matchup(db_session, league, 2, a, c, 0.0, 0.0)
+    future.status = "preevent"
+    live = add_matchup(db_session, league, 3, a, d, 40.0, 30.0)
+    live.status = "midevent"
+    db_session.commit()
+
+    table = {
+        row["name"]: row
+        for row in standings_service.league_standings(db_session, league)
+    }
+    assert (table["A"]["wins"], table["A"]["ties"], table["A"]["games_played"]) == (1, 0, 1)
+    assert standings_service.completed_weeks(db_session, league) == [1]
+
+
 # --- simulator configuration ----------------------------------------------
+
+
+def test_league_config_derives_from_yahoo_settings(db_session):
+    league = make_league(db_session, roster_slots=SMALL_SLOTS)
+    league.settings_json = {"playoff_start_week": "15", "num_playoff_teams": "4"}
+    assert playoff_odds.league_config(league) == (14, 4)
+    league.settings_json = {"playoff_start_week": "13", "num_playoff_teams": "6"}
+    assert playoff_odds.league_config(league) == (12, 6)
+
+
+def test_league_config_explicit_keys_beat_yahoo_settings(db_session):
+    league = make_league(db_session, roster_slots=SMALL_SLOTS)
+    league.settings_json = {
+        "regular_season_weeks": 10,
+        "playoff_teams": 2,
+        "playoff_start_week": "15",
+        "num_playoff_teams": "6",
+    }
+    assert playoff_odds.league_config(league) == (10, 2)
+
 
 
 def test_league_config_defaults(db_session):

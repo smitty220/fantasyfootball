@@ -939,6 +939,7 @@ def test_team_lineup_fills_every_slot_and_benches_the_rest(
             "percent_started": None,
             "better_fa_week_points": None,
             "better_fa_ros_points": None,
+            "reserve": False,
             # No NflGame rows seeded, so the schedule fields all read "unknown".
             "bye_week": None,
             "opponent": None,
@@ -1083,6 +1084,10 @@ def bench_fa_league(db_session):
     rb3 = make_player(db_session, "RB3", "RB", 30)
     wr1 = make_player(db_session, "WR1", "WR", 120)
     roster(db_session, league, mine, qb1, rb1, rb2, rb3, wr1)
+    # The displayed lineup is this week's best, so the starters need weekly
+    # projections that outrank RB3's.
+    for player, points in ((qb1, 25), (rb1, 18), (rb2, 11), (wr1, 12)):
+        set_week_points(db_session, player, points)
     set_week_points(db_session, rb3, 5)
 
     fa_rb = make_player(db_session, "Bench FA RB", "RB", 80)

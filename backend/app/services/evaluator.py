@@ -21,8 +21,11 @@ whatever week the ingestion last stored -- see :func:`current_projection_week`.
 
 *Starters* come from the owner's saved lineup when one exists
 (:func:`manual_lineup` -- ``RosterSlot`` rows stored under
-:data:`MANUAL_LINEUP_WEEK`), and otherwise from the ROS-optimal lineup
-(:func:`_fill_lineup` on ROS points). One starter set is used for every
+:data:`MANUAL_LINEUP_WEEK`), for a Yahoo league from the lineup the owner has
+actually set in Yahoo (:func:`yahoo_lineup` -- the synced ``RosterSlot`` rows
+for the league's current week), and otherwise from the ROS-optimal lineup
+(:func:`_fill_lineup` on ROS points). ``lineup_mode="optimal"`` skips the
+first two and always computes the optimal lineup. One starter set is used for every
 comparison, weekly and ROS alike, so the "who would this pickup replace?"
 answer never depends on which column you are looking at.
 
@@ -114,6 +117,12 @@ _SLOT_ALIASES: dict[str, str] = {
 #: real weekly rosters are stored under week >= 1, so week 0 can never collide
 #: with a synced roster.
 MANUAL_LINEUP_WEEK = 0
+
+#: Which starter set a :class:`TeamRoster` is built from. ``"actual"`` is the
+#: lineup the owner has really set (saved manual lineup, or Yahoo's synced
+#: one), falling back to optimal when there is none; ``"optimal"`` always
+#: computes the projected-optimal lineup.
+LINEUP_MODES: tuple[str, ...] = ("actual", "optimal")
 
 TRADE_VALUE_SOURCE = "fantasycalc"
 
@@ -912,13 +921,61 @@ def _manual_lineup_pairs(
     return lineup
 
 
+def _is_reserve_slot(raw_slot: str | None) -> bool:
+    """True for Yahoo's injured-reserve / not-active slots (``IR``, ``IR+``,
+    ``NA``) -- players parked there cannot be started without a move."""
+    label = normalize_slot(raw_slot or "")
+    return label in ("IR", "NA") or label.startswith("IR")
+
+
+def yahoo_lineup(
+    db: Session, league: League, team_id: int
+) -> tuple[dict[int, str], frozenset[int]] | None:
+    """The lineup the owner has set in Yahoo: ``(player_id -> slot, reserve)``.
+
+    Read from the synced ``RosterSlot`` rows for ``league.current_week`` (or
+    the latest synced week when the league has no current week on file).
+    Slot labels are normalized (``W/R/T`` -> ``FLEX``); ``BN``/``IR``/``NA``
+    and anything else that is not a starting slot simply is not a starter.
+    ``reserve`` holds the players sitting in an IR/NA slot.
+
+    ``None`` when nothing has been synced for that week yet -- the caller then
+    falls back to the computed optimal lineup.
+    """
+    week = league.current_week
+    if week is None:
+        week = (
+            db.query(func.max(RosterSlot.week))
+            .filter(RosterSlot.team_id == team_id, RosterSlot.week >= 1)
+            .scalar()
+        )
+    if week is None or int(week) == MANUAL_LINEUP_WEEK:
+        return None
+    rows = (
+        db.query(RosterSlot)
+        .filter(RosterSlot.team_id == team_id, RosterSlot.week == int(week))
+        .all()
+    )
+    if not rows:
+        return None
+    assignments = {
+        row.player_id: normalize_slot(row.selected_position or "") for row in rows
+    }
+    reserve = frozenset(
+        row.player_id for row in rows if _is_reserve_slot(row.selected_position)
+    )
+    return assignments, reserve
+
+
 class TeamRoster(NamedTuple):
     """One team's players, its starting lineup, and both points views.
 
-    The lineup is the owner's saved one when the team has one, and the
-    *ROS-optimal* one otherwise (``source`` says which). Either way a single
-    starter set drives both the ROS and the weekly comparisons, so the two
-    never disagree about who is starting.
+    The lineup is the owner's saved one when the team has one, Yahoo's
+    actual one for a synced Yahoo league, and the *ROS-optimal* one otherwise
+    (``source`` says which: ``"manual"``, ``"yahoo"`` or ``"auto"``). Either
+    way a single starter set drives both the ROS and the weekly comparisons,
+    so the two never disagree about who is starting. ``reserve`` is the
+    players in a Yahoo IR/NA slot (always empty outside ``"yahoo"``).
     """
 
     player_ids: list[int]
@@ -927,6 +984,7 @@ class TeamRoster(NamedTuple):
     week_points: dict[int, float]
     positions: dict[int, str | None]
     source: str = "auto"
+    reserve: frozenset[int] = frozenset()
 
     @property
     def starter_slots(self) -> dict[int, str]:
@@ -941,20 +999,89 @@ def _team_roster(
     season: int,
     week: int | None,
     sources: Sequence[str] | None = None,
+    lineup_mode: str = "actual",
+    by_week: bool = False,
 ) -> TeamRoster:
+    """One team's roster and starters; see :data:`LINEUP_MODES`.
+
+    ``by_week`` makes a computed lineup the best one for *this* week (see
+    :func:`_week_fill_points`) rather than the ROS-optimal one.
+    """
+    if lineup_mode not in LINEUP_MODES:
+        raise ValueError(f"unknown lineup mode {lineup_mode!r}")
     ids = _team_player_ids(db, league, team_id)
     ros_points, positions = _points_and_positions(db, league, ids, season, sources)
     week_points = _week_points(db, league, ids, season, week, sources)
     roster_slots = league_roster_slots(league)
 
-    assignments = manual_lineup(db, team_id)
-    if assignments is not None:
-        lineup = _manual_lineup_pairs(assignments, roster_slots, ids, ros_points)
-        source = "manual"
+    if lineup_mode == "actual":
+        assignments = manual_lineup(db, team_id)
+        if assignments is not None:
+            lineup = _manual_lineup_pairs(assignments, roster_slots, ids, ros_points)
+            return TeamRoster(
+                ids, lineup, ros_points, week_points, positions, "manual"
+            )
+        actual = yahoo_lineup(db, league, team_id) if league.source == "yahoo" else None
+        if actual is not None:
+            assignments, reserve = actual
+            lineup = _manual_lineup_pairs(assignments, roster_slots, ids, ros_points)
+            rostered = set(ids)
+            return TeamRoster(
+                ids,
+                lineup,
+                ros_points,
+                week_points,
+                positions,
+                "yahoo",
+                frozenset(pid for pid in reserve if pid in rostered),
+            )
+
+    if by_week:
+        # Yahoo's IR/NA seats mark a player out even before injury_status catches up.
+        synced = yahoo_lineup(db, league, team_id) if league.source == "yahoo" else None
+        reserve = synced[1] if synced is not None else ()
+        fill_points = _week_fill_points(db, ids, week_points, ros_points, reserve)
     else:
-        lineup = _fill_lineup(roster_slots, ros_points, positions, ids)
-        source = "auto"
-    return TeamRoster(ids, lineup, ros_points, week_points, positions, source)
+        fill_points = ros_points
+    lineup = _fill_lineup(roster_slots, fill_points, positions, ids)
+    return TeamRoster(ids, lineup, ros_points, week_points, positions, "auto")
+
+
+#: Injury designations that rule a player out of this week's game.
+UNAVAILABLE_STATUSES = frozenset({"O", "IR", "PUP", "PUP-R", "NFI-R", "SUSP", "NA"})
+
+
+def _week_fill_points(
+    db: Session,
+    ids: Sequence[int],
+    week_points: Mapping[int, float],
+    ros_points: Mapping[int, float],
+    reserve: Iterable[int] = (),
+) -> dict[int, float]:
+    """Ranking keys for this week's best lineup.
+
+    Players with a weekly projection rank by it. A player with none (on bye,
+    or simply unprojected) ranks below every projected player, and one ruled
+    out by injury below those; ROS points break ties inside each tier, so a
+    thin roster still fills its seats with the likeliest contributors.
+    """
+    out = {
+        player.id
+        for player in db.query(Player.id, Player.injury_status)
+        .filter(Player.id.in_(ids))
+        .all()
+        if (player.injury_status or "").upper() in UNAVAILABLE_STATUSES
+    } | set(reserve)
+    keys: dict[int, float] = {}
+    for pid in ids:
+        ros_tiebreak = ros_points.get(pid, 0.0) / 10_000
+        if pid in out:
+            keys[pid] = -20_000 + ros_tiebreak
+        elif week_points.get(pid) is not None:
+            keys[pid] = week_points[pid]
+        else:
+            keys[pid] = -10_000 + ros_tiebreak
+    return keys
 
 
 def _worst_starters(
@@ -1118,8 +1245,21 @@ def evaluate_free_agents(
     positions = position_filter(position)
 
     team = _my_team(db, league)
+    # A Yahoo league judges pickups against the *optimal* starters, not the
+    # lineup the owner happens to have set: a benched stud or a starter on bye
+    # would otherwise make every free agent look like an upgrade. A manual
+    # league's saved lineup is still honoured, exactly as before.
     my_roster = (
-        _team_roster(db, league, team.id, season, week, sources)
+        _team_roster(
+            db,
+            league,
+            team.id,
+            season,
+            week,
+            sources,
+            lineup_mode="optimal" if league.source == "yahoo" else "actual",
+            by_week=True,
+        )
         if team is not None
         else None
     )
@@ -1260,6 +1400,7 @@ def team_lineup(
     team_id: int,
     season: int | None = None,
     sources: Sequence[str] | None = None,
+    lineup_mode: str = "actual",
 ) -> dict:
     """One team's starting lineup, seat by seat, plus its bench.
 
@@ -1269,7 +1410,11 @@ def team_lineup(
     (``source == "manual"``, and a seat the owner left empty comes back with a
     null ``player``), and from the ROS-optimal lineup otherwise
     (``source == "auto"``, which never leaves a seat empty while an eligible
-    player is on the bench).
+    player is on the bench). A Yahoo league with a synced roster for its
+    current week shows the lineup the owner actually set in Yahoo
+    (``source == "yahoo"``; empty seats come back null, ``BN``/``IR`` players
+    land on the bench, IR/NA ones flagged ``reserve``).
+    ``lineup_mode="optimal"`` always returns the computed optimal lineup.
 
     Works for any team in the league, not just mine. ``sources`` selects which
     projections the seats -- and the points shown in them -- are computed from.
@@ -1277,7 +1422,9 @@ def team_lineup(
     season = season if season is not None else current_nfl_season()
     week = current_projection_week(db, season, sources)
     opponents = _nfl_schedule().team_opponent(db, season, week)
-    roster = _team_roster(db, league, team_id, season, week, sources)
+    roster = _team_roster(
+        db, league, team_id, season, week, sources, lineup_mode=lineup_mode, by_week=True
+    )
     fa_best_week = _free_agent_best_week_points(db, league, season, week, sources)
     fa_best_ros = _free_agent_best_ros_points(db, league, season, sources)
 
@@ -1316,6 +1463,7 @@ def team_lineup(
             "percent_started": player.percent_started if player else None,
             "better_fa_week_points": better_fa_week_points,
             "better_fa_ros_points": better_fa_ros_points,
+            "reserve": pid in roster.reserve,
             **_schedule_fields(player, opponents),
         }
 

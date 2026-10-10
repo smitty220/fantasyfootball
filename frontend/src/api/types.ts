@@ -32,6 +32,17 @@ export interface League {
   current_week?: number | null
 }
 
+export interface Matchup {
+  id: number
+  week: number
+  home_team_id: number
+  away_team_id: number
+  home_points: number | null
+  away_points: number | null
+  is_playoffs: boolean
+  status: string | null
+}
+
 export interface LeagueDetail extends League {
   scoring_rules?: ScoringRules
   roster_slots?: RosterSlots
@@ -166,6 +177,8 @@ export interface LineupPlayer {
   bye_week: number | null
   opponent: string | null
   on_bye: boolean
+  /** Yahoo bench player parked in an IR/NA slot; can't start without a move. */
+  reserve?: boolean
 }
 
 export interface LineupSlotEntry {
@@ -173,7 +186,11 @@ export interface LineupSlotEntry {
   player: LineupPlayer | null
 }
 
-export type LineupSource = 'manual' | 'auto'
+/** "manual" saved lineup, "yahoo" lineup set in Yahoo, "auto" computed optimal. */
+export type LineupSource = 'manual' | 'yahoo' | 'auto'
+
+/** Which lineup the lineup endpoint returns: the owner's actual one or the optimal one. */
+export type LineupMode = 'actual' | 'optimal'
 
 export interface TeamLineupResponse {
   week: number | null
@@ -278,6 +295,9 @@ export type DataSourceId =
   | 'nfl_schedule'
   | 'nfl_actuals'
   | 'yahoo_access_check'
+  | 'yahoo_leagues'
+  | 'yahoo_schedule'
+  | 'yahoo_discover'
 
 export type ProjectionSourceId = 'fantasypros' | 'espn'
 

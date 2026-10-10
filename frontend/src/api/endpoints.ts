@@ -15,6 +15,8 @@ import type {
   LeagueAccuracyResponse,
   LeagueDetail,
   LineupAssignment,
+  LineupMode,
+  Matchup,
   ManualMatchup,
   PlayerSearchResult,
   PlayoffOddsResponse,
@@ -80,6 +82,10 @@ export function setLeagueKeeper(leagueKey: string, isKeeper: boolean): Promise<L
   return apiPut(`/api/leagues/${encodeURIComponent(leagueKey)}`, { is_keeper: isKeeper })
 }
 
+export function getMatchups(leagueKey: string, week: number): Promise<Matchup[]> {
+  return apiGet(`/api/leagues/${encodeURIComponent(leagueKey)}/matchups${buildQuery({ week })}`)
+}
+
 export function getTeams(leagueKey: string): Promise<Team[]> {
   return apiGet(`/api/leagues/${encodeURIComponent(leagueKey)}/teams`)
 }
@@ -139,10 +145,12 @@ export function getTeamLineup(
   leagueKey: string,
   teamId: number,
   sources?: string[],
+  lineup?: LineupMode,
 ): Promise<TeamLineupResponse> {
   return apiGet(
     `/api/leagues/${encodeURIComponent(leagueKey)}/evaluate/teams/${teamId}/lineup${buildQuery({
       sources: sources && sources.length > 0 ? sources.join(',') : undefined,
+      lineup: lineup === 'optimal' ? 'optimal' : undefined,
     })}`,
   )
 }

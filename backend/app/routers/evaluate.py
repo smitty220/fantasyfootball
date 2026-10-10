@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -98,6 +99,9 @@ class LineupPlayer(ScheduleFields):
     better_fa_week_points: float | None = None
     #: Same, for rest-of-season points.
     better_fa_ros_points: float | None = None
+    #: True for a Yahoo bench player parked in an IR/NA slot (can't be started
+    #: without a roster move); always false outside Yahoo-lineup responses.
+    reserve: bool = False
 
 
 class LineupSlot(BaseModel):
@@ -111,7 +115,8 @@ class TeamLineupResponse(BaseModel):
     league_key: str
     team_id: int
     week: int | None = None
-    #: "manual" when the owner saved this lineup, "auto" when we computed it.
+    #: "manual" when the owner saved this lineup, "yahoo" when it is the one
+    #: set in Yahoo (synced), "auto" when we computed the optimal one.
     source: str
     slots: list[LineupSlot]
     bench: list[LineupPlayer]
@@ -241,6 +246,7 @@ def lineup_response(
     team_id: int,
     season: int | None = None,
     sources: tuple[str, ...] | None = None,
+    lineup_mode: str = "actual",
 ) -> TeamLineupResponse:
     """The lineup payload for one team.
 
@@ -253,6 +259,7 @@ def lineup_response(
         team_id,
         season=season if season is not None else current_nfl_season(),
         sources=sources,
+        lineup_mode=lineup_mode,
     )
     return TeamLineupResponse(
         league_key=league.league_key,
@@ -316,12 +323,24 @@ def team_lineup(
     league_key: str,
     team_id: int,
     sources: str | None = Query(default=None, description=SOURCES_DESCRIPTION),
+    lineup: Literal["actual", "optimal"] = Query(
+        default="actual",
+        description=(
+            "\"actual\" (default): the owner's saved lineup, or for a Yahoo "
+            "league the lineup set in Yahoo; falls back to optimal when there "
+            "is none. \"optimal\": always the projected-optimal lineup."
+        ),
+    ),
     db: Session = Depends(get_db),
 ) -> TeamLineupResponse:
-    """One team's starting lineup: the owner's if saved, else ROS-optimal."""
+    """One team's starting lineup: the owner's actual one when we have it
+    (saved manual lineup / Yahoo's), else ROS-optimal; ``?lineup=optimal``
+    forces the optimal one."""
     league = _get_league(db, league_key)
     team = _get_team(db, league, team_id)
-    return lineup_response(db, league, team.id, sources=_sources(sources))
+    return lineup_response(
+        db, league, team.id, sources=_sources(sources), lineup_mode=lineup
+    )
 
 
 @router.post("/{league_key}/evaluate/trade", response_model=TradeResponse)

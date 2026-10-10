@@ -359,6 +359,7 @@ export function LeagueDetailPage() {
                 teamId={selectedTeam.id}
                 teamName={selectedTeam.name}
                 editable={isManual}
+                isYahoo={league?.source === 'yahoo'}
               />
             ) : (
               <EmptyState>Select a team to view its roster.</EmptyState>

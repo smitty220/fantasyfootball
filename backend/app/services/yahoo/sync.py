@@ -12,10 +12,11 @@ import json
 import logging
 import time
 from contextlib import contextmanager
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Iterator
 
 import yahoo_fantasy_api as yfa
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -27,8 +28,8 @@ from app.models import (
     RosterSlot,
     SyncLog,
     Team,
-    Transaction,
 )
+from app.services import matching
 from app.services.yahoo.session import make_session_context
 
 logger = logging.getLogger(__name__)
@@ -40,10 +41,11 @@ PLAYERS_PER_PAGE = 25
 PAGE_DELAY_SECONDS = 0.5
 MAX_PLAYER_PAGES = 40
 
-#: How many recent transactions to pull per sync.
-TRANSACTION_COUNT = 50
+#: NFL fantasy regular season + playoffs, used if Yahoo omits end_week.
+DEFAULT_END_WEEK = 17
 
-TRANSACTION_TYPES = "add,drop,commish,trade"
+#: How long sync_log rows are kept.
+SYNC_LOG_RETENTION_DAYS = 30
 
 #: Positions that describe a lineup slot rather than what a player *is*.
 _SLOT_POSITIONS = {
@@ -196,8 +198,11 @@ def _bye_week(yahoo_player: dict) -> int | None:
 def _get_or_create_player(db: Session, yahoo_player: dict) -> Player:
     """Resolve a Yahoo player payload to a canonical ``players`` row.
 
-    Matches on ``yahoo_id``; other platform IDs stay NULL until the nflverse
-    crosswalk enrichment lands.
+    Matches on ``yahoo_id`` first. The nflverse crosswalk lags on Yahoo IDs
+    for new rookies and has none for team defenses, so an unknown ID falls
+    back to the shared unambiguous matching (name + position; team for a
+    defense) against rows no other Yahoo player has claimed, and the match
+    adopts the Yahoo ID. Only when that finds nothing is a new row created.
     """
     raw_id = yahoo_player.get("player_id")
     yahoo_id = str(raw_id) if raw_id not in (None, "") else None
@@ -207,6 +212,14 @@ def _get_or_create_player(db: Session, yahoo_player: dict) -> Player:
         player = db.query(Player).filter(Player.yahoo_id == yahoo_id).first()
 
     name = _player_name(yahoo_player)
+    if player is None:
+        position = _primary_position(yahoo_player)
+        match = matching.find_by_position_team(
+            db, position, yahoo_player.get("editorial_team_abbr")
+        ) or matching.find_by_name_position(db, name, position)
+        if match is not None and match.yahoo_id is None:
+            player = match
+            player.yahoo_id = yahoo_id
     if player is None:
         player = Player(full_name=name or f"Yahoo player {yahoo_id}", yahoo_id=yahoo_id)
         db.add(player)
@@ -489,8 +502,36 @@ def _parse_matchup_team(team_node: Any) -> tuple[str | None, float | None]:
     return team_key, points
 
 
-def _sync_matchups(db: Session, league: League, lg, week: int) -> str:
-    parsed = _parse_matchups(lg.matchups(week=week))
+def _find_matchup_row(
+    db: Session, league_id: int, week: int, home_id: int, away_id: int | None
+) -> Matchup | None:
+    """Existing row for this pairing, whichever side is stored as home."""
+    query = db.query(Matchup).filter(
+        Matchup.league_id == league_id, Matchup.week == week
+    )
+    if away_id is None:
+        query = query.filter(
+            Matchup.home_team_id == home_id, Matchup.away_team_id.is_(None)
+        )
+    else:
+        query = query.filter(
+            or_(
+                and_(Matchup.home_team_id == home_id, Matchup.away_team_id == away_id),
+                and_(Matchup.home_team_id == away_id, Matchup.away_team_id == home_id),
+            )
+        )
+    return query.order_by(Matchup.id).first()
+
+
+def _store_matchups(
+    db: Session, league: League, parsed: list[dict], week: int
+) -> int:
+    """Upsert parsed scoreboard entries for ``week``; returns rows saved.
+
+    Entries whose teams cannot be resolved (TBD playoff slots) are skipped.
+    Rows are matched on the *unordered* team pair so Yahoo flipping which side
+    it lists first never creates a duplicate.
+    """
     team_ids = {
         team.team_key: team.id
         for team in db.query(Team).filter(Team.league_id == league.id).all()
@@ -508,18 +549,11 @@ def _sync_matchups(db: Session, league: League, lg, week: int) -> str:
         if home_id is None:
             continue
         away_id = team_ids.get(away_key)
+        if away_key is not None and away_id is None:
+            continue
         matchup_week = entry["week"] or week
 
-        row = (
-            db.query(Matchup)
-            .filter(
-                Matchup.league_id == league.id,
-                Matchup.week == matchup_week,
-                Matchup.home_team_id == home_id,
-                Matchup.away_team_id == away_id,
-            )
-            .one_or_none()
-        )
+        row = _find_matchup_row(db, league.id, matchup_week, home_id, away_id)
         if row is None:
             row = Matchup(
                 league_id=league.id,
@@ -529,14 +563,54 @@ def _sync_matchups(db: Session, league: League, lg, week: int) -> str:
             )
             db.add(row)
 
-        row.home_points = home_points
-        row.away_points = away_points
+        if row.home_team_id == home_id:
+            row.home_points, row.away_points = home_points, away_points
+        else:  # stored the other way round
+            row.home_points, row.away_points = away_points, home_points
         row.is_playoffs = entry["is_playoffs"]
         row.status = entry["status"]
+        db.flush()
         saved += 1
 
     db.commit()
+    return saved
+
+
+def _sync_matchups(db: Session, league: League, lg, week: int) -> str:
+    saved = _store_matchups(db, league, _parse_matchups(lg.matchups(week=week)), week)
     return f"{saved} matchup(s) for week {week}"
+
+
+def _season_end_week(league: League, lg) -> int:
+    settings = league.settings_json or {}
+    end = _to_int(settings.get("end_week"))
+    if end is None:
+        end = _to_int(lg.settings().get("end_week"))
+    return max(end or DEFAULT_END_WEEK, 1)
+
+
+def _sync_season_matchups(db: Session, league: League, lg) -> str:
+    """Pull the scoreboard for every week, playoffs included."""
+    start = max(_to_int((league.settings_json or {}).get("start_week")) or 1, 1)
+    end = _season_end_week(league, lg)
+
+    saved = 0
+    failed: list[int] = []
+    for week in range(start, end + 1):
+        try:
+            saved += _store_matchups(
+                db, league, _parse_matchups(lg.matchups(week=week)), week
+            )
+        except Exception:  # noqa: BLE001 - one bad week must not lose the rest
+            db.rollback()
+            logger.exception("Yahoo scoreboard for week %s failed", week)
+            failed.append(week)
+        time.sleep(PAGE_DELAY_SECONDS)
+
+    message = f"{saved} matchup(s) over weeks {start}-{end}"
+    if failed:
+        raise YahooSyncError(f"{message}; weeks failed: {failed}")
+    return message
 
 
 def _iter_player_pages(lg, status: str) -> Iterator[list[dict]]:
@@ -661,48 +735,18 @@ def _sync_draft(db: Session, league: League, lg) -> str:
     return f"{saved} draft pick(s)"
 
 
-def _sync_transactions(db: Session, league: League, lg) -> str:
-    results = lg.transactions(TRANSACTION_TYPES, str(TRANSACTION_COUNT))
-
-    saved = 0
-    for entry in results:
-        key = entry.get("transaction_key")
-        if not key:
-            continue
-
-        row = (
-            db.query(Transaction)
-            .filter(Transaction.yahoo_transaction_key == key)
-            .one_or_none()
-        )
-        if row is None:
-            row = Transaction(yahoo_transaction_key=key, league_id=league.id)
-            db.add(row)
-
-        row.league_id = league.id
-        row.type = entry.get("type")
-        timestamp = _to_int(entry.get("timestamp"))
-        if timestamp:
-            row.timestamp = datetime.fromtimestamp(timestamp, tz=timezone.utc).replace(
-                tzinfo=None
-            )
-        row.data_json = _jsonable(entry)
-        saved += 1
-
-    db.commit()
-    return f"{saved} transaction(s)"
-
-
 # --------------------------------------------------------------------------- #
 # league sync entry point
 # --------------------------------------------------------------------------- #
 
 
-def sync_league(db: Session, league_key: str) -> dict:
+def sync_league(db: Session, league_key: str, full: bool = True) -> dict:
     """Sync one league end-to-end.
 
     Sub-resources are synced in dependency order; a failure in any one of them
-    is logged and the rest still run.
+    is logged and the rest still run. ``full=False`` skips the free-agent pages
+    and draft results -- most of a sync's Yahoo requests, and the parts that
+    don't need refreshing every few minutes.
     """
     existing = db.query(League).filter(League.league_key == league_key).one_or_none()
     errors: list[str] = []
@@ -749,23 +793,21 @@ def sync_league(db: Session, league_key: str) -> dict:
                 lambda: _sync_matchups(db, league, lg, week),
                 errors,
             )
-            _run_step(
-                db,
-                "yahoo.free_agents",
-                league.id,
-                lambda: _sync_free_agents(db, league, lg),
-                errors,
-            )
-            _run_step(
-                db, "yahoo.draft", league.id, lambda: _sync_draft(db, league, lg), errors
-            )
-            _run_step(
-                db,
-                "yahoo.transactions",
-                league.id,
-                lambda: _sync_transactions(db, league, lg),
-                errors,
-            )
+            if full:
+                _run_step(
+                    db,
+                    "yahoo.free_agents",
+                    league.id,
+                    lambda: _sync_free_agents(db, league, lg),
+                    errors,
+                )
+                _run_step(
+                    db,
+                    "yahoo.draft",
+                    league.id,
+                    lambda: _sync_draft(db, league, lg),
+                    errors,
+                )
 
             league.synced_at = _utcnow()
             db.commit()
@@ -813,4 +855,134 @@ def check_api_access(db: Session) -> str:
                 )
             else:
                 log.message = f"HTTP {response.status_code}: {body}"
+        return log.message
+
+
+# --------------------------------------------------------------------------- #
+# scheduled / registry jobs
+# --------------------------------------------------------------------------- #
+
+
+def prune_sync_logs(db: Session, days: int = SYNC_LOG_RETENTION_DAYS) -> int:
+    """Delete sync_log rows older than ``days``; returns how many went."""
+    cutoff = _utcnow() - timedelta(days=days)
+    deleted = (
+        db.query(SyncLog)
+        .filter(SyncLog.started_at < cutoff, SyncLog.status != "running")
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+    return deleted
+
+
+def _yahoo_leagues(db: Session) -> list[League]:
+    return (
+        db.query(League).filter(League.source == "yahoo").order_by(League.id).all()
+    )
+
+
+def _for_each_yahoo_league(
+    db: Session, key: str, fn: Callable[[League], str]
+) -> str:
+    """Run ``fn`` against every Yahoo league under one ``key`` SyncLog row.
+
+    Never raises: a missing Yahoo connection or a failing league is recorded
+    on the log (status ``error`` / ``partial``) so the scheduler and the Run
+    button both get a readable result.
+    """
+    with _sync_log(db, key) as log:
+        leagues = _yahoo_leagues(db)
+        if not leagues:
+            log.message = "no Yahoo leagues to sync"
+            return log.message
+
+        try:
+            make_session_context(db).close()
+        except Exception as exc:  # noqa: BLE001 - YahooNotConnectedError etc.
+            log.status = "error"
+            log.message = f"Yahoo not connected: {exc}"[:2000]
+            return log.message
+
+        parts: list[str] = []
+        failures = 0
+        for league in leagues:
+            try:
+                parts.append(f"{league.name}: {fn(league)}")
+            except Exception as exc:  # noqa: BLE001
+                db.rollback()
+                logger.exception("%s failed for %s", key, league.league_key)
+                failures += 1
+                parts.append(f"{league.name}: ERROR {exc}")
+        if failures == len(leagues):
+            log.status = "error"
+        elif failures:
+            log.status = "partial"
+        log.message = " | ".join(parts)[:2000]
+        return log.message
+
+
+#: The 15-minute job refreshes free agents (~40 of a league's ~55 requests)
+#: only when the last successful free-agent sync is at least this old.
+FREE_AGENT_REFRESH = timedelta(minutes=55)
+
+
+def _free_agents_due(db: Session, league: League) -> bool:
+    last = (
+        db.query(SyncLog.started_at)
+        .filter(
+            SyncLog.resource == "yahoo.free_agents",
+            SyncLog.league_id == league.id,
+            SyncLog.status == "success",
+        )
+        .order_by(SyncLog.started_at.desc())
+        .first()
+    )
+    return last is None or _utcnow() - last[0] >= FREE_AGENT_REFRESH
+
+
+def sync_yahoo_leagues(db: Session) -> str:
+    """Registry job ``yahoo_leagues``: current-week sync of every Yahoo league.
+
+    Rosters, standings and this week's matchups every run; free agents and the
+    draft about hourly (see :data:`FREE_AGENT_REFRESH`).
+    """
+
+    def one(league: League) -> str:
+        result = sync_league(db, league.league_key, full=_free_agents_due(db, league))
+        text = f"{result['status']} (week {result['week']})"
+        if result["errors"]:
+            text += f" [{'; '.join(result['errors'])}]"
+        return text
+
+    message = _for_each_yahoo_league(db, "yahoo_leagues", one)
+    prune_sync_logs(db)
+    return message
+
+
+def sync_yahoo_schedule(db: Session) -> str:
+    """Registry job ``yahoo_schedule``: full-season matchups for every league."""
+
+    def one(league: League) -> str:
+        sc = make_session_context(db)
+        try:
+            lg = yfa.Game(sc, NFL_GAME_CODE).to_league(league.league_key)
+            return _sync_season_matchups(db, league, lg)
+        finally:
+            sc.close()
+
+    return _for_each_yahoo_league(db, "yahoo_schedule", one)
+
+
+def discover_yahoo_leagues(db: Session) -> str:
+    """Registry job ``yahoo_discover``: find new leagues, nothing else."""
+    with _sync_log(db, "yahoo_discover") as log:
+        try:
+            leagues = discover_leagues(db)
+        except Exception as exc:  # noqa: BLE001 - surface on the log, don't raise
+            log.status = "error"
+            log.message = f"{exc}"[:2000]
+            return log.message
+        log.message = f"{len(leagues)} league(s): " + ", ".join(
+            league.name for league in leagues
+        )
         return log.message

@@ -41,6 +41,9 @@ MISFIRE_GRACE_TIME = 60 * 60
 _JOB_SPECS: dict[str, Callable[[], object]] = {
     "sleeper_trending": lambda: IntervalTrigger(hours=6, start_date=_offset(minutes=5)),
     "yahoo_access_check": lambda: IntervalTrigger(hours=6, start_date=_offset(minutes=8)),
+    "yahoo_leagues": lambda: IntervalTrigger(minutes=15, start_date=_offset(minutes=3)),
+    "yahoo_schedule": lambda: CronTrigger(hour=3, minute=30),
+    "yahoo_discover": lambda: CronTrigger(hour=3, minute=15),
     "sleeper_players": lambda: CronTrigger(hour=1, minute=0),
     "fantasycalc": lambda: CronTrigger(hour=1, minute=15),
     "espn_projections": lambda: IntervalTrigger(hours=6, start_date=_offset(minutes=10)),

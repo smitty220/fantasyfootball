@@ -109,6 +109,7 @@ export function LeaguesPage() {
                     teamId={myTeam.id}
                     teamName={myTeam.name}
                     editable={canEdit && league.source === 'manual'}
+                    isYahoo={league.source === 'yahoo'}
                   />
                 ) : (
                   <EmptyState>Star your team in this league to see its roster here.</EmptyState>

@@ -5,6 +5,10 @@ computations and :func:`app.services.evaluator.evaluate_free_agents` for the
 top-free-agent section, so this module owns no scoring/eligibility logic of
 its own beyond the small slot-eligibility helper needed to compare a bench
 player against a starter's slot.
+
+The lineup is taken in its default ``"actual"`` mode: a Yahoo league's alerts
+(and ``my_lineup_week_points``) judge the lineup the owner has really set in
+Yahoo -- "you're starting a player on bye" -- not the one we would pick.
 """
 
 from __future__ import annotations
@@ -159,6 +163,9 @@ def _compute_alerts(lineup: dict) -> dict:
         for candidate in bench:
             candidate_points = candidate.get("week_points")
             if candidate_points is None:
+                continue
+            if candidate.get("reserve"):
+                # On IR/NA: can't be started without a roster move.
                 continue
             if candidate.get("position") not in eligible:
                 continue

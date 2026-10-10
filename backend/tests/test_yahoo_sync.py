@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pytest
 
 from app.models import League, LeaguePlayer, Player, SyncLog
@@ -114,6 +116,83 @@ def test_get_or_create_player_matches_existing_yahoo_id(db_session):
     assert player.id == existing.id
     assert player.full_name == "Brock Purdy"  # refreshed from Yahoo
     assert db_session.query(Player).count() == 1
+
+
+def test_get_or_create_player_adopts_unlinked_rookie_by_name(db_session):
+    # The crosswalk has no Yahoo ID for a fresh rookie yet: match by name +
+    # position (suffix-insensitive) and adopt the Yahoo ID, no duplicate row.
+    rookie = Player(full_name="Harold Fannin", position="TE", nfl_team="CLE", sleeper_id="12")
+    db_session.add(rookie)
+    db_session.commit()
+
+    player = sync._get_or_create_player(
+        db_session,
+        {
+            "player_id": "40100",
+            "name": "Harold Fannin Jr.",
+            "editorial_team_abbr": "Cle",
+            "eligible_positions": ["TE"],
+        },
+    )
+    db_session.commit()
+
+    assert player.id == rookie.id
+    assert player.yahoo_id == "40100"
+    assert db_session.query(Player).count() == 1
+
+
+def test_get_or_create_player_adopts_team_defense_by_team(db_session):
+    defense = Player(full_name="New Orleans Saints", position="DEF", nfl_team="NO", sleeper_id="NO")
+    db_session.add(defense)
+    db_session.commit()
+
+    player = sync._get_or_create_player(
+        db_session,
+        {
+            "player_id": "100018",
+            "name": "Saints",
+            "editorial_team_abbr": "NO",
+            "eligible_positions": ["DEF"],
+        },
+    )
+    db_session.commit()
+
+    assert player.id == defense.id
+    assert player.yahoo_id == "100018"
+
+
+def test_get_or_create_player_never_steals_another_yahoo_players_row(db_session):
+    claimed = Player(full_name="Mike Williams", position="WR", yahoo_id="111")
+    db_session.add(claimed)
+    db_session.commit()
+
+    player = sync._get_or_create_player(
+        db_session,
+        {"player_id": "222", "name": "Mike Williams", "eligible_positions": ["WR"]},
+    )
+    db_session.commit()
+
+    assert player.id != claimed.id
+    assert claimed.yahoo_id == "111"
+
+
+def test_get_or_create_player_ambiguous_name_creates_new_row(db_session):
+    db_session.add_all(
+        [
+            Player(full_name="Josh Johnson", position="QB", sleeper_id="1"),
+            Player(full_name="Josh Johnson", position="QB", sleeper_id="2"),
+        ]
+    )
+    db_session.commit()
+
+    sync._get_or_create_player(
+        db_session,
+        {"player_id": "333", "name": "Josh Johnson", "eligible_positions": ["QB"]},
+    )
+    db_session.commit()
+
+    assert db_session.query(Player).filter_by(yahoo_id="333").one().sleeper_id is None
+    assert db_session.query(Player).count() == 3
 
 
 def test_get_or_create_player_ignores_slot_positions(db_session):
@@ -360,3 +439,184 @@ def test_current_nfl_season():
     assert sync.current_nfl_season(date(2026, 9, 6)) == 2026
     assert sync.current_nfl_season(date(2027, 1, 10)) == 2026
     assert sync.current_nfl_season(date(2026, 3, 1)) == 2026
+
+
+# --- matchups: full season, flipped sides, TBD teams -------------------------
+
+
+def _scoreboard(week: int, status: str, pairs: list[tuple[str, float | None, str, float | None]]):
+    def team(key, pts):
+        node = [[{"team_key": key}], {"team_points": {"total": pts}}]
+        return {"team": node}
+
+    matchups = {"count": len(pairs)}
+    for i, (k1, p1, k2, p2) in enumerate(pairs):
+        matchups[str(i)] = {
+            "matchup": {
+                "week": str(week),
+                "status": status,
+                "is_playoffs": "0",
+                "0": {"teams": {"0": team(k1, p1), "1": team(k2, p2), "count": 2}},
+            }
+        }
+    return {
+        "fantasy_content": {
+            "league": [{"league_key": "x"}, {"scoreboard": {"0": {"matchups": matchups}}}]
+        }
+    }
+
+
+class FakeScoreboardLeague:
+    def __init__(self, boards: dict[int, dict]) -> None:
+        self.boards = boards
+        self.weeks: list[int] = []
+
+    def matchups(self, week=None):
+        self.weeks.append(week)
+        return self.boards.get(week, {})
+
+    def settings(self):
+        return {"end_week": "3"}
+
+
+@pytest.fixture()
+def two_teams(db_session, league):
+    from app.models import Team
+
+    a = Team(team_key="461.l.12345.t.1", league_id=league.id, name="A")
+    b = Team(team_key="461.l.12345.t.2", league_id=league.id, name="B")
+    db_session.add_all([a, b])
+    db_session.commit()
+    return a, b
+
+
+def test_season_sync_pulls_every_week_and_stores_future_rows(db_session, league, two_teams):
+    from app.models import Matchup
+
+    a, b = two_teams
+    league.settings_json = {"start_week": "1", "end_week": "3"}
+    db_session.commit()
+    boards = {
+        1: _scoreboard(1, "postevent", [(a.team_key, 100.0, b.team_key, 90.0)]),
+        2: _scoreboard(2, "preevent", [(a.team_key, 0.0, b.team_key, 0.0)]),
+        3: _scoreboard(3, "preevent", [(a.team_key, None, "461.l.12345.t.99", None)]),  # TBD
+    }
+    lg = FakeScoreboardLeague(boards)
+
+    sync._sync_season_matchups(db_session, league, lg)
+
+    assert lg.weeks == [1, 2, 3]
+    rows = db_session.query(Matchup).order_by(Matchup.week).all()
+    assert [(r.week, r.status) for r in rows] == [(1, "postevent"), (2, "preevent")]
+
+
+def test_matchup_upsert_survives_home_away_flip(db_session, league, two_teams):
+    from app.models import Matchup
+
+    a, b = two_teams
+    lg = FakeScoreboardLeague(
+        {1: _scoreboard(1, "midevent", [(a.team_key, 10.0, b.team_key, 20.0)])}
+    )
+    sync._sync_matchups(db_session, league, lg, 1)
+    lg.boards = {1: _scoreboard(1, "postevent", [(b.team_key, 25.0, a.team_key, 15.0)])}
+    sync._sync_matchups(db_session, league, lg, 1)
+
+    rows = db_session.query(Matchup).all()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.home_team_id == a.id
+    assert (row.home_points, row.away_points, row.status) == (15.0, 25.0, "postevent")
+
+
+def test_sync_league_no_longer_syncs_transactions():
+    import inspect
+
+    assert not hasattr(sync, "_sync_transactions")
+    assert "transactions" not in inspect.getsource(sync.sync_league)
+
+
+# --- registry jobs -----------------------------------------------------------
+
+
+def test_prune_sync_logs_removes_only_old_rows(db_session):
+    from datetime import timedelta
+
+    now = sync._utcnow()
+    db_session.add_all(
+        [
+            SyncLog(resource="old", started_at=now - timedelta(days=31), status="success"),
+            SyncLog(resource="new", started_at=now - timedelta(days=1), status="success"),
+        ]
+    )
+    db_session.commit()
+
+    assert sync.prune_sync_logs(db_session) == 1
+    assert [r.resource for r in db_session.query(SyncLog)] == ["new"]
+
+
+def test_sync_yahoo_leagues_isolates_failures(db_session, league, monkeypatch):
+    other = League(league_key="461.l.2", game_key="461", name="Other", season=2026)
+    db_session.add(other)
+    db_session.commit()
+    monkeypatch.setattr(sync, "make_session_context", lambda db: type("C", (), {"close": lambda s: None})())
+
+    def fake_sync_league(db, key, full=True):
+        if key == league.league_key:
+            raise RuntimeError("boom")
+        return {"status": "success", "week": 5, "errors": []}
+
+    monkeypatch.setattr(sync, "sync_league", fake_sync_league)
+
+    sync.sync_yahoo_leagues(db_session)
+
+    log = db_session.query(SyncLog).filter_by(resource="yahoo_leagues").one()
+    assert log.status == "partial"
+    assert "boom" in log.message and "Other: success" in log.message
+
+
+def test_sync_yahoo_leagues_refreshes_free_agents_about_hourly(
+    db_session, league, monkeypatch
+):
+    monkeypatch.setattr(sync, "make_session_context", lambda db: type("C", (), {"close": lambda s: None})())
+    calls: list[bool] = []
+
+    def fake_sync_league(db, key, full=True):
+        calls.append(full)
+        return {"status": "success", "week": 5, "errors": []}
+
+    monkeypatch.setattr(sync, "sync_league", fake_sync_league)
+
+    sync.sync_yahoo_leagues(db_session)  # never synced: free agents due
+    recent = SyncLog(
+        resource="yahoo.free_agents",
+        league_id=league.id,
+        status="success",
+        started_at=sync._utcnow() - timedelta(minutes=20),
+    )
+    db_session.add(recent)
+    db_session.commit()
+    sync.sync_yahoo_leagues(db_session)  # 20 minutes ago: skip
+    recent.started_at = sync._utcnow() - timedelta(minutes=60)
+    db_session.commit()
+    sync.sync_yahoo_leagues(db_session)  # an hour ago: due again
+
+    assert calls == [True, False, True]
+
+
+def test_sync_yahoo_leagues_when_not_connected(db_session, league, monkeypatch):
+    def refuse(db):
+        raise RuntimeError("no token")
+
+    monkeypatch.setattr(sync, "make_session_context", refuse)
+
+    sync.sync_yahoo_leagues(db_session)  # must not raise
+
+    log = db_session.query(SyncLog).filter_by(resource="yahoo_leagues").one()
+    assert log.status == "error"
+    assert "not connected" in log.message
+
+
+def test_discover_job_logs_under_registry_key(db_session, monkeypatch):
+    monkeypatch.setattr(sync, "discover_leagues", lambda db: [])
+    sync.discover_yahoo_leagues(db_session)
+    assert db_session.query(SyncLog).filter_by(resource="yahoo_discover").one().status == "success"

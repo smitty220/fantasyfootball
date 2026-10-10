@@ -7,7 +7,7 @@ import { Badge, Button, Card } from '../components/ui'
 import { useToast } from '../components/toastContext'
 import { useSession } from '../components/sessionContext'
 
-const SOURCES: { id: DataSourceId; name: string; description: string }[] = [
+const SOURCES: { id: DataSourceId; name: string; description: string; button?: string }[] = [
   {
     id: 'crosswalk',
     name: 'Player ID crosswalk',
@@ -54,6 +54,25 @@ const SOURCES: { id: DataSourceId; name: string; description: string }[] = [
     description: 'Probes whether Yahoo has activated Fantasy API access for our app yet.',
   },
   {
+    id: 'yahoo_leagues',
+    name: 'Yahoo league sync',
+    description:
+      'Rosters, matchups, free agents and draft for every Yahoo league. Can take a minute or two to run.',
+    button: 'Sync now',
+  },
+  {
+    id: 'yahoo_schedule',
+    name: 'Yahoo season schedule',
+    description: 'Full-season matchups (every week, playoffs included) for every Yahoo league.',
+    button: 'Sync schedule',
+  },
+  {
+    id: 'yahoo_discover',
+    name: 'Find Yahoo leagues',
+    description: 'Looks for new Yahoo leagues on your account and adds them.',
+    button: 'Find leagues',
+  },
+  {
     id: 'nfl_actuals',
     name: 'NFL actual stats',
     description: 'Real weekly player results from nflverse; powers the Accuracy page.',
@@ -80,6 +99,9 @@ const REFRESH_INTERVAL_LABEL: Record<DataSourceId, string> = {
   nfl_schedule: 'week',
   nfl_actuals: '2x week',
   yahoo_access_check: '6h',
+  yahoo_leagues: '15m',
+  yahoo_schedule: 'day',
+  yahoo_discover: 'day',
 }
 
 function formatCountdown(nextRunAt: string | null | undefined): string | null {
@@ -100,7 +122,7 @@ function toneForStatus(status: string | undefined): 'neutral' | 'success' | 'war
   if (!status) return 'neutral'
   const s = status.toLowerCase()
   if (s.includes('run') || s.includes('progress') || s.includes('pending')) return 'accent'
-  if (s.includes('error') || s.includes('fail')) return 'warning'
+  if (s.includes('error') || s.includes('fail') || s.includes('partial')) return 'warning'
   if (s.includes('ok') || s.includes('success') || s.includes('done') || s.includes('complete')) return 'success'
   return 'neutral'
 }
@@ -153,7 +175,11 @@ export function DataPage() {
     try {
       const result = await refreshDataSource(id)
       setResultMessage((prev) => ({ ...prev, [id]: result.message || result.status }))
-      showSuccess(`${id} refresh finished`)
+      if (result.status === 'success') {
+        showSuccess(`${id} refresh finished`)
+      } else {
+        showError(`${id} refresh ${result.status === 'partial' ? 'partly failed' : 'failed'} — see details below`)
+      }
       loadStatus()
     } catch (err) {
       const message = err instanceof ApiError ? err.message : 'Refresh failed'
@@ -195,7 +221,7 @@ export function DataPage() {
                 </div>
                 {canEdit && (
                   <Button variant="primary" busy={isRunning} onClick={() => handleRefresh(source.id)}>
-                    Refresh
+                    {source.button ?? 'Refresh'}
                   </Button>
                 )}
               </div>

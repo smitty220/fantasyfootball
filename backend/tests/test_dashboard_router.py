@@ -12,6 +12,7 @@ from tests.test_evaluator import (
     make_player,
     make_team,
     roster,
+    save_lineup,
     set_week_points,
 )
 
@@ -53,6 +54,10 @@ def dashboard_seed(db_session):
     set_week_points(db_session, wr1, 18)
     set_week_points(db_session, bench_rb, 30)  # beats RB Two's FLEX week points
     set_week_points(db_session, bench_wr, 3)
+
+    # The owner's lineup as set (the alerts judge what is actually started):
+    # RB One despite his bye, and RB Two in FLEX over the hotter Bench Racer.
+    save_lineup(db_session, my_team, {qb1: "QB", rb1: "RB", wr1: "WR", rb2: "FLEX"})
 
     fa_qb = make_player(db_session, "FA Quarterback", "QB", 400, nfl_team="SEA")
     set_week_points(db_session, fa_qb, 40)

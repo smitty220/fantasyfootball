@@ -15,6 +15,12 @@ producers (this app's matchup editor writes ``"final"``, the Yahoo sync writes
 Yahoo's own vocabulary), while the presence of two scores means the same thing
 no matter who wrote the row.
 
+*Unplayed or live rows are not final.* The Yahoo sync stores future weeks as
+``status == "preevent"`` with 0/null points and the in-progress week as
+``"midevent"`` with partial points; both are excluded even if scores are
+present, so a 0-0 placeholder never counts as a tie and a half-played week
+never counts as a result.
+
 *Playoff rows are excluded.* Standings describe the regular season; a playoff
 bracket result is not another regular-season win. ``is_playoffs`` defaults to
 false, so this only ever matters for synced leagues.
@@ -25,9 +31,14 @@ team without an opponent); such a row is not a game and scores nothing.
 
 from __future__ import annotations
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models import League, Matchup, Team
+
+
+#: Yahoo scoreboard statuses meaning the game is not finished.
+_NOT_FINAL_STATUSES = ("preevent", "midevent")
 
 
 def final_matchups(db: Session, league: League) -> list[Matchup]:
@@ -42,6 +53,7 @@ def final_matchups(db: Session, league: League) -> list[Matchup]:
             Matchup.league_id == league.id,
             Matchup.is_playoffs.is_(False),
             Matchup.away_team_id.isnot(None),
+            or_(Matchup.status.is_(None), Matchup.status.notin_(_NOT_FINAL_STATUSES)),
             Matchup.home_points.isnot(None),
             Matchup.away_points.isnot(None),
         )

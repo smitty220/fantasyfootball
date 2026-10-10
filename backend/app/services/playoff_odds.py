@@ -64,22 +64,36 @@ SIGMA_FRACTION = 0.22
 def league_config(league: League) -> tuple[int, int]:
     """``(regular_season_weeks, playoff_teams)`` for a league.
 
-    Both are read out of ``settings_json`` with the module defaults, so a
+    Explicit ``regular_season_weeks`` / ``playoff_teams`` keys win (manual
+    leagues); otherwise Yahoo's ``playoff_start_week - 1`` and
+    ``num_playoff_teams`` are used. Both fall back to the module defaults, so a
     league created before these keys existed simulates a standard 14-week,
     6-team-playoff season.
     """
     settings = league.settings_json or {}
 
-    def positive_int(key: str, default: int) -> int:
+    def positive_int(value: object) -> int | None:
         try:
-            value = int(settings.get(key) or default)
+            number = int(float(value))  # type: ignore[arg-type]
         except (TypeError, ValueError):
-            return default
-        return value if value > 0 else default
+            return None
+        return number if number > 0 else None
+
+    weeks = positive_int(settings.get("regular_season_weeks"))
+    if weeks is None:
+        # Yahoo leagues carry the raw Yahoo settings: the playoffs start the
+        # week after the regular season ends.
+        start = positive_int(settings.get("playoff_start_week"))
+        if start is not None and start > 1:
+            weeks = start - 1
+
+    teams = positive_int(settings.get("playoff_teams"))
+    if teams is None:
+        teams = positive_int(settings.get("num_playoff_teams"))
 
     return (
-        positive_int("regular_season_weeks", DEFAULT_REGULAR_SEASON_WEEKS),
-        positive_int("playoff_teams", DEFAULT_PLAYOFF_TEAMS),
+        weeks or DEFAULT_REGULAR_SEASON_WEEKS,
+        teams or DEFAULT_PLAYOFF_TEAMS,
     )
 
 
