@@ -108,7 +108,7 @@ Samba share, so this is a drag-and-drop:
 ```
 /addon_configs/local_gridironhq/
 ├── app.db          <- the SQLite database
-├── backups/        <- one dated copy per day, 7 kept, written on every start
+├── backups/        <- dated copies, newest 14 kept (on start and daily)
 └── cache/          <- downloaded CSV/JSON caches, safe to delete
 ```
 

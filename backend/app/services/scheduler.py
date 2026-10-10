@@ -19,6 +19,7 @@ from __future__ import annotations
 import importlib
 import logging
 from typing import Callable
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -35,31 +36,38 @@ logger = logging.getLogger(__name__)
 #: time, still run it up to an hour late rather than skip it silently.
 MISFIRE_GRACE_TIME = 60 * 60
 
+
+def _cron(**fields) -> CronTrigger:
+    """Cron trigger in the configured zone (the server clock is UTC, the
+    owner is not): the hour/minute fields below are local wall-clock times."""
+    return CronTrigger(timezone=ZoneInfo(settings.SCHEDULER_TIMEZONE), **fields)
+
+
 #: source -> trigger factory. Interval jobs get a small future ``start_date``
 #: offset (rather than all starting "now") so they don't all fire together on
 #: process boot; cron jobs are naturally staggered by their hour/minute.
 _JOB_SPECS: dict[str, Callable[[], object]] = {
     "sleeper_trending": lambda: IntervalTrigger(hours=6, start_date=_offset(minutes=5)),
-    "yahoo_access_check": lambda: IntervalTrigger(hours=6, start_date=_offset(minutes=8)),
     "yahoo_leagues": lambda: IntervalTrigger(minutes=15, start_date=_offset(minutes=3)),
-    "yahoo_schedule": lambda: CronTrigger(hour=3, minute=30),
-    "yahoo_discover": lambda: CronTrigger(hour=3, minute=15),
-    "sleeper_players": lambda: CronTrigger(hour=1, minute=0),
-    "fantasycalc": lambda: CronTrigger(hour=1, minute=15),
+    "yahoo_schedule": lambda: _cron(hour=3, minute=30),
+    "yahoo_discover": lambda: _cron(hour=3, minute=15),
+    "sleeper_players": lambda: _cron(hour=1, minute=0),
+    "fantasycalc": lambda: _cron(hour=1, minute=15),
     "espn_projections": lambda: IntervalTrigger(hours=6, start_date=_offset(minutes=10)),
     "espn_week_projections": lambda: IntervalTrigger(hours=6, start_date=_offset(minutes=20)),
     "fantasypros_projections": lambda: IntervalTrigger(hours=1, start_date=_offset(minutes=30)),
     "fantasypros_week_projections": lambda: IntervalTrigger(hours=1, start_date=_offset(minutes=40)),
-    "crosswalk": lambda: CronTrigger(day_of_week="sun", hour=2, minute=0),
+    "db_backup": lambda: _cron(hour=4, minute=30),
+    "crosswalk": lambda: _cron(day_of_week="sun", hour=2, minute=0),
     # The NFL schedule only moves when a game is flexed, which the league
     # settles early in the week -- Tuesday morning catches it with a full week
     # to spare, and refreshes bye weeks at the same time.
-    "nfl_schedule": lambda: CronTrigger(day_of_week="tue", hour=3, minute=0),
+    "nfl_schedule": lambda: _cron(day_of_week="tue", hour=3, minute=0),
     # Actual weekly stats only change when games are played: the week is
     # complete after Monday night, so Tuesday morning picks it up, and Friday
     # catches the stat corrections nflverse folds in over the following days
     # (an hour after the schedule job, which shares the same nflverse origin).
-    "nfl_actuals": lambda: CronTrigger(day_of_week="tue,fri", hour=4, minute=0),
+    "nfl_actuals": lambda: _cron(day_of_week="tue,fri", hour=4, minute=0),
 }
 
 
@@ -68,10 +76,11 @@ def _offset(**kwargs):
     start times so they don't all fire on process boot at once."""
     from datetime import datetime, timedelta
 
-    return datetime.now() + timedelta(**kwargs)
+    # tz-aware: a naive value would be read in the scheduler's zone.
+    return datetime.now(ZoneInfo(settings.SCHEDULER_TIMEZONE)) + timedelta(**kwargs)
 
 
-scheduler = BackgroundScheduler()
+scheduler = BackgroundScheduler(timezone=ZoneInfo(settings.SCHEDULER_TIMEZONE))
 
 _started = False
 

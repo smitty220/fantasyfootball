@@ -191,3 +191,15 @@ def test_data_schedule_endpoint(client, monkeypatch):
     for row in body:
         assert row["scheduled"] is False
         assert row["next_run_at"] is None
+
+
+def test_cron_jobs_run_in_scheduler_timezone(fresh_scheduler, monkeypatch):
+    from zoneinfo import ZoneInfo
+
+    monkeypatch.setattr(settings, "SCHEDULER_ENABLED", True)
+    start_scheduler()
+
+    job = fresh_scheduler.get_job(_job_id("db_backup"))
+    assert job.trigger.timezone == ZoneInfo("America/Chicago")
+    assert job.next_run_time.hour == 4 and job.next_run_time.minute == 30
+    assert "yahoo_access_check" not in REFRESH_REGISTRY

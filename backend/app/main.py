@@ -7,7 +7,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 import app.models  # noqa: F401  (register models with Base before migrating)
 from app.middleware import SessionAuthMiddleware
-from app.migrations import backup_sqlite, run_migrations
+from app.migrations import run_migrations
+from app.services.backup import backup_sqlite
 from app.routers import (
     accuracy,
     app_auth,

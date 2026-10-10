@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     # Tests force this to False (see tests/conftest.py) so the suite never
     # spins up real APScheduler jobs.
     SCHEDULER_ENABLED: bool = True
+    # Time zone for cron-style jobs (the box itself runs UTC). Interval jobs
+    # are unaffected.
+    SCHEDULER_TIMEZONE: str = "America/Chicago"
 
 
 settings = Settings()

@@ -33,13 +33,20 @@ tar czf - --exclude='./.git' --exclude='./frontend/node_modules' \
   --exclude='./backend/secrets.env' --exclude='.DS_Store' \
   --exclude='./backend/.pytest_cache' --exclude='__pycache__' \
   --exclude='./addons/gridironhq/app' . \
-  | ssh ffball@192.168.5.20 'tar xzf - -C /opt/stacks/fantasy-football'
+  | ssh ffball@192.168.5.20 'cd /opt/stacks/fantasy-football \
+      && rm -rf backend/app backend/alembic backend/tests frontend/src \
+      && tar xzf - -C /opt/stacks/fantasy-football'
 
 ssh ffball@192.168.5.20 'cd /opt/stacks/fantasy-football && docker compose up -d --build'
 ```
 
 `data/` is excluded on purpose: the server's database is the live one, and a
 stray copy from the Mac would overwrite it.
+
+The source folders are cleared before extracting because a tar stream only
+adds and overwrites: a file deleted on the Mac would otherwise linger on the
+server and still be built (a removed frontend file broke a build this way).
+`data/` and `.env` sit outside those folders and are never touched.
 
 Alembic migrations run at container startup (`app.migrations.run_migrations()`),
 so a deploy that carries new migrations needs no extra step.
@@ -71,8 +78,17 @@ curl -s localhost:8090/api/health    # {"status":"ok","version":"0.1.0"}
 
 ## Backups
 
-The app writes a dated copy into `data/backups/` on every start and keeps
-seven. For an off-box snapshot:
+The app keeps SQLite copies in `data/backups/`, made with SQLite's online
+backup API (consistent even while the app is running):
+
+- on start: `app-YYYYMMDD.db`, one per day (a same-day restart keeps the
+  morning's copy);
+- daily at 04:30 America/Chicago (the `db_backup` job on the Data page, with a
+  "Back up now" button): `app-YYYYMMDD-HHMMSS.db`.
+
+The newest 14 files matching that naming are kept; other files in the folder
+are never touched. Cron-style jobs run in `SCHEDULER_TIMEZONE` (default
+`America/Chicago`; the box itself is UTC). For an off-box snapshot:
 
 ```bash
 ssh ffball@192.168.5.20 'cd /opt/stacks/fantasy-football && docker compose stop app \

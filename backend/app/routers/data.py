@@ -25,9 +25,9 @@ router = APIRouter(prefix="/api/data", tags=["data"])
 #: ``db: Session`` argument and write its own SyncLog row (see
 #: app.services.crosswalk/sleeper/fantasycalc for the pattern).
 REFRESH_REGISTRY: dict[str, tuple[str, str]] = {
+    "db_backup": ("app.services.backup", "refresh_backup"),
     "crosswalk": ("app.services.crosswalk", "refresh_crosswalk"),
     "nfl_schedule": ("app.services.nfl_schedule", "refresh_schedule"),
-    "yahoo_access_check": ("app.services.yahoo.sync", "check_api_access"),
     "yahoo_leagues": ("app.services.yahoo.sync", "sync_yahoo_leagues"),
     "yahoo_schedule": ("app.services.yahoo.sync", "sync_yahoo_schedule"),
     "yahoo_discover": ("app.services.yahoo.sync", "discover_yahoo_leagues"),
