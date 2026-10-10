@@ -43,40 +43,36 @@ def _players_payload(**overrides) -> dict:
 
 
 @respx.mock
-def test_refresh_players_creates_and_matches(db_session):
+def test_refresh_players_only_enriches_existing_players(db_session):
+    # Yahoo created these; Sleeper fills IDs and gaps but never adds players.
+    mahomes = Player(full_name="Patrick Mahomes", yahoo_id="30123", position="QB",
+                     nfl_team="KC", injury_status="Q")
+    texans = Player(full_name="Texans", yahoo_id="100034", position="DEF", nfl_team="HOU")
+    db_session.add_all([mahomes, texans])
+    db_session.commit()
     respx.get(PLAYERS_URL).mock(
         return_value=httpx.Response(200, json=_players_payload())
     )
 
     message = sleeper.refresh_players(db_session)
 
-    players = {p.full_name: p for p in db_session.query(Player).all()}
-    assert set(players) == {"Patrick Mahomes", "Houston Texans"}  # LB filtered out
-
-    mahomes = players["Patrick Mahomes"]
-    assert mahomes.sleeper_id == "4046"
-    assert mahomes.position == "QB"
-    assert mahomes.nfl_team == "KC"
-    assert mahomes.injury_status == "Questionable"
-    assert mahomes.yahoo_id == "30123"
-    assert mahomes.espn_id == "3139477"
-    assert mahomes.gsis_id == "00-0033873"
-
-    texans = players["Houston Texans"]
-    assert texans.sleeper_id == "HOU"
-    assert texans.position == "DEF"
-
-    assert "2 created" in message
+    assert db_session.query(Player).count() == 2
+    db_session.refresh(mahomes)
+    db_session.refresh(texans)
+    assert mahomes.sleeper_id == "4046"  # matched via yahoo_id
+    assert (mahomes.espn_id, mahomes.gsis_id) == ("3139477", "00-0033873")
+    assert texans.sleeper_id == "HOU"  # matched via position + team
+    assert "2 matched" in message
     log = db_session.query(SyncLog).filter(SyncLog.resource == "sleeper_players").one()
     assert log.status == "success"
 
 
 @respx.mock
-def test_refresh_players_enriches_existing_and_updates_injury(db_session):
-    existing = Player(full_name="Pat Mahomes", yahoo_id="30123", position="QB")
+def test_refresh_players_leaves_yahoo_fields_alone(db_session):
+    existing = Player(full_name="Pat Mahomes", yahoo_id="30123", position="QB",
+                      nfl_team="KC", injury_status="Q")
     db_session.add(existing)
     db_session.commit()
-
     respx.get(PLAYERS_URL).mock(
         return_value=httpx.Response(200, json=_players_payload())
     )
@@ -84,10 +80,23 @@ def test_refresh_players_enriches_existing_and_updates_injury(db_session):
     sleeper.refresh_players(db_session)
 
     db_session.refresh(existing)
-    assert existing.sleeper_id == "4046"  # matched via yahoo_id, then filled
-    assert existing.full_name == "Patrick Mahomes"  # refreshed
-    assert existing.injury_status == "Questionable"
-    assert db_session.query(Player).filter(Player.full_name == "Patrick Mahomes").count() == 1
+    assert existing.full_name == "Pat Mahomes"
+    assert existing.injury_status == "Q"  # Yahoo's, not Sleeper's "Questionable"
+
+
+@respx.mock
+def test_refresh_players_name_match_fills_a_yahoo_only_rookie(db_session):
+    rookie = Player(full_name="Patrick Mahomes II", position="QB", yahoo_id="99")
+    db_session.add(rookie)
+    db_session.commit()
+    payload = _players_payload()
+    payload["4046"]["yahoo_id"] = None  # Sleeper doesn't know his Yahoo ID yet
+    respx.get(PLAYERS_URL).mock(return_value=httpx.Response(200, json=payload))
+
+    sleeper.refresh_players(db_session)
+
+    db_session.refresh(rookie)
+    assert rookie.sleeper_id == "4046"
 
 
 @respx.mock
@@ -109,7 +118,7 @@ def test_refresh_players_never_overwrites_conflicting_id(db_session):
 
     db_session.refresh(existing)
     assert existing.yahoo_id == "DIFFERENT-ID"  # never overwritten
-    assert existing.injury_status == "Questionable"  # still refreshed
+    assert existing.espn_id == "3139477"  # missing IDs still filled
 
 
 @respx.mock

@@ -24,6 +24,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.models import Player, SyncLog, TrendingSignal
+from app.services import matching
 
 logger = logging.getLogger(__name__)
 
@@ -125,13 +126,16 @@ def _enrich_ids(player: Player, sleeper_id: str, ids: dict[str, str | None]) -> 
 
 
 def refresh_players(db: Session) -> str:
-    """Sync player metadata (name/position/team/injury) from Sleeper."""
+    """Enrich existing players with Sleeper IDs (for trending) and missing details.
+
+    Never creates players: the Yahoo sync decides which players exist.
+    """
     with _sync_log(db, "sleeper_players") as log:
         response = httpx.get(f"{BASE_URL}/players/nfl", timeout=30)
         response.raise_for_status()
         payload = response.json()
 
-        created = 0
+        skipped = 0
         updated = 0
         for sleeper_id, entry in payload.items():
             position = entry.get("position")
@@ -153,25 +157,30 @@ def refresh_players(db: Session) -> str:
 
             player = _find_player(db, sleeper_id, ids)
             if player is None:
-                player = Player(full_name=name, sleeper_id=sleeper_id)
-                for col, value in ids.items():
-                    if value:
-                        setattr(player, col, value)
-                db.add(player)
-                created += 1
-            else:
-                _enrich_ids(player, sleeper_id, ids)
-                updated += 1
+                player = matching.find_by_position_team(
+                    db, position, entry.get("team")
+                ) or matching.find_by_name_position(db, name, position)
+                if player is not None and player.sleeper_id not in (None, sleeper_id):
+                    player = None
+            if player is None:
+                # Yahoo decides which players exist; Sleeper only enriches.
+                skipped += 1
+                continue
 
-            player.full_name = name
-            player.position = position
-            player.nfl_team = entry.get("team") or player.nfl_team
-            player.injury_status = entry.get("injury_status") or None
+            _enrich_ids(player, sleeper_id, ids)
+            for col, value in ids.items():
+                if value and getattr(player, col) is None:
+                    setattr(player, col, value)
+            # Name/position/team/injury are Yahoo's; only fill gaps.
+            player.full_name = player.full_name or name
+            player.position = player.position or position
+            player.nfl_team = player.nfl_team or entry.get("team")
             player.updated_at = _utcnow()
+            updated += 1
             db.flush()
 
         db.commit()
-        log.message = f"{created} created, {updated} updated"
+        log.message = f"{updated} matched, {skipped} not in Yahoo data (skipped)"
         return log.message
 
 

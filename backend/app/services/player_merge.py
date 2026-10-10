@@ -12,7 +12,11 @@ unambiguous canonical row; :func:`merge_player` repoints everything at the
 canonical row and deletes the duplicate. Run as a module for a dry run, or
 with ``--apply``::
 
-    python -m app.services.player_merge [--only 12736,12745] [--apply]
+    python -m app.services.player_merge [--only 12736,12745] [--prune] [--apply]
+
+``--prune`` also removes every player no Yahoo pull references (see
+:func:`players_outside_yahoo`): Yahoo is the source of truth for which
+players exist.
 """
 
 from __future__ import annotations
@@ -60,12 +64,18 @@ def _is_yahoo_only(player: Player) -> bool:
     )
 
 
+def _team(abbr: str | None) -> str:
+    """Normalized team, with "FA" (no team) treated as unknown."""
+    team = normalize_team_abbr(abbr)
+    return "" if team.rstrip("*") == "FA" else team
+
+
 def _same_entity(dup: Player, candidate: Player) -> bool:
     position = normalize_position(dup.position)
     if not position or normalize_position(candidate.position) != position:
         return False
-    dup_team = normalize_team_abbr(dup.nfl_team)
-    candidate_team = normalize_team_abbr(candidate.nfl_team)
+    dup_team = _team(dup.nfl_team)
+    candidate_team = _team(candidate.nfl_team)
     if position == "DST":
         # Defenses have no shared name across sources ("Saints" vs "New
         # Orleans Saints"); the team is the identity.
@@ -80,14 +90,24 @@ def find_yahoo_duplicates(db: Session) -> list[tuple[Player, Player]]:
     """``(duplicate, canonical)`` pairs, only where exactly one canonical fits.
 
     Canonical candidates are rows without a ``yahoo_id`` (a row that already
-    has one is some other Yahoo player).
+    has one is some other Yahoo player) that carry some other platform ID --
+    an ID-less row has nothing to contribute and only makes names ambiguous.
     """
-    candidates = db.query(Player).filter(Player.yahoo_id.is_(None)).all()
+    candidates = [
+        p
+        for p in db.query(Player).filter(Player.yahoo_id.is_(None)).all()
+        if any(getattr(p, column) for column in _OTHER_IDS)
+    ]
     pairs: list[tuple[Player, Player]] = []
     for dup in db.query(Player).filter(Player.yahoo_id.isnot(None)).all():
         if not _is_yahoo_only(dup):
             continue
         matches = [c for c in candidates if _same_entity(dup, c)]
+        if len(matches) > 1:
+            # The pre-Yahoo sources sometimes split one person into a
+            # projection-linked row and a Sleeper-only row; the one carrying
+            # projection IDs is the canonical one (the other gets pruned).
+            matches = [c for c in matches if c.fantasypros_id or c.espn_id]
         if len(matches) == 1:
             pairs.append((dup, matches[0]))
     return pairs
@@ -135,6 +155,46 @@ def merge_player(db: Session, dup: Player, keep: Player) -> None:
     db.flush()
 
 
+_CHUNK = 500  # stay well under SQLite's bound-parameter limit
+
+
+def players_outside_yahoo(db: Session) -> list[Player]:
+    """Players no Yahoo pull references: not on a roster, not in any league's
+    free-agent/waiver lists, never drafted.
+
+    Yahoo is the source of truth for which players exist; anything else was
+    seeded by Sleeper or the nflverse crosswalk before Yahoo access. A
+    ``yahoo_id`` alone doesn't count -- the crosswalk fills those in for
+    veterans Yahoo never returned to us.
+    """
+    referenced: set[int] = set()
+    for column in (LeaguePlayer.player_id, RosterSlot.player_id, DraftPick.player_id):
+        referenced.update(pid for (pid,) in db.query(column).distinct() if pid is not None)
+    return [p for p in db.query(Player).all() if p.id not in referenced]
+
+
+def prune_players(db: Session, players: list[Player]) -> dict[str, int]:
+    """Delete ``players`` and their projection/value/trending/actuals rows.
+
+    Returns row counts deleted per table. Flushes but does not commit.
+    """
+    ids = [p.id for p in players]
+    counts: dict[str, int] = {}
+    for model in (Projection, TradeValue, TrendingSignal, ActualStat, Player):
+        column = model.id if model is Player else model.player_id
+        deleted = 0
+        for start in range(0, len(ids), _CHUNK):
+            deleted += (
+                db.query(model)
+                .filter(column.in_(ids[start : start + _CHUNK]))
+                .delete(synchronize_session=False)
+            )
+        counts[model.__tablename__] = deleted
+    db.flush()
+    db.expire_all()
+    return counts
+
+
 def main(argv: list[str] | None = None) -> None:
     from app.db import SessionLocal
 
@@ -142,6 +202,11 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--apply", action="store_true", help="merge (default: dry run)")
     parser.add_argument(
         "--only", help="comma-separated duplicate player ids to limit the run to"
+    )
+    parser.add_argument(
+        "--prune",
+        action="store_true",
+        help="after merging, delete players no Yahoo pull references",
     )
     args = parser.parse_args(argv)
     only = {int(x) for x in args.only.split(",")} if args.only else None
@@ -168,8 +233,29 @@ def main(argv: list[str] | None = None) -> None:
                 merge_player(db, dup, keep)
             db.commit()
             print("merged")
-        else:
-            print("dry run: nothing changed (pass --apply to merge)")
+        if args.prune:
+            # In a dry run the canonical rows of unmerged pairs aren't
+            # referenced yet; they would be after --apply, so leave them out.
+            pending = {keep.id for _, keep in pairs} if not args.apply else set()
+            outside = [p for p in players_outside_yahoo(db) if p.id not in pending]
+            ids = {p.id for p in outside}
+            linked = sum(1 for p in outside if any(getattr(p, c) for c in _OTHER_IDS))
+            projected = {
+                pid
+                for (pid,) in db.query(Projection.player_id).distinct()
+                if pid in ids
+            }
+            print(
+                f"prune: {len(outside)} of {db.query(Player).count()} player(s) are in no "
+                f"Yahoo pull ({linked} with platform IDs, {len(projected)} with "
+                f"projections); {sum(1 for p in outside if p.yahoo_id)} carry a yahoo_id"
+            )
+            if args.apply:
+                counts = prune_players(db, outside)
+                db.commit()
+                print(f"pruned: {counts}")
+        if not args.apply:
+            print("dry run: nothing changed (pass --apply to merge/prune)")
     finally:
         db.close()
 

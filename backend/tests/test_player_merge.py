@@ -137,3 +137,72 @@ def test_cli_dry_run_changes_nothing_and_only_limits_the_apply(db_session, monke
     db_session.expire_all()
     assert db_session.get(Player, jeanty_id) is None
     assert db_session.get(Player, warren_id) is not None
+
+
+def test_id_less_rows_are_not_canonical_candidates(db_session):
+    # Blank historical copies must not make a real match ambiguous.
+    keep = Player(full_name="Marvin Harrison", position="WR", nfl_team="ARI", sleeper_id="1")
+    blank = Player(full_name="Marvin Harrison", position="WR", nfl_team="ARI")
+    dup = Player(full_name="Marvin Harrison Jr.", position="WR", nfl_team="Ari", yahoo_id="9")
+    db_session.add_all([keep, blank, dup])
+    db_session.commit()
+
+    assert [(d.id, k.id) for d, k in player_merge.find_yahoo_duplicates(db_session)] == [
+        (dup.id, keep.id)
+    ]
+
+
+def test_prune_keeps_every_player_a_yahoo_pull_references(db_session):
+    league, team = _league_and_team(db_session)
+    rostered = Player(full_name="On A Roster", position="RB", yahoo_id="1")
+    available = Player(full_name="Free Agent", position="WR", yahoo_id="2")
+    drafted = Player(full_name="Drafted Then Dropped", position="TE", yahoo_id="3")
+    veteran = Player(full_name="Crosswalk Veteran", position="QB", yahoo_id="4", sleeper_id="4")
+    retired = Player(full_name="Joe Horn", position="WR")
+    db_session.add_all([rostered, available, drafted, veteran, retired])
+    db_session.flush()
+    db_session.add_all(
+        [
+            RosterSlot(team_id=team.id, week=5, player_id=rostered.id, selected_position="RB"),
+            LeaguePlayer(league_id=league.id, player_id=available.id, status="FA"),
+            DraftPick(league_id=league.id, round=9, pick=1, team_id=team.id, player_id=drafted.id),
+            Projection(player_id=veteran.id, source="fantasypros", season=2026, week=None,
+                       stat_json={}, fetched_at=utcnow()),
+        ]
+    )
+    db_session.commit()
+
+    outside = player_merge.players_outside_yahoo(db_session)
+    # A yahoo_id from the crosswalk doesn't mean Yahoo returned the player.
+    assert {p.full_name for p in outside} == {"Crosswalk Veteran", "Joe Horn"}
+
+    counts = player_merge.prune_players(db_session, outside)
+    db_session.commit()
+
+    assert counts["players"] == 2 and counts["projections"] == 1
+    assert {p.full_name for p in db_session.query(Player).all()} == {
+        "On A Roster",
+        "Free Agent",
+        "Drafted Then Dropped",
+    }
+
+
+def test_prefers_the_projection_linked_row_when_sources_split_a_player(db_session):
+    projected = Player(full_name="CJ Daniels", position="WR", nfl_team="LAR", espn_id="1", fantasypros_id="2")
+    sleeper_only = Player(full_name="CJ Daniels", position="WR", nfl_team="LAR", sleeper_id="3")
+    dup = Player(full_name="CJ Daniels", position="WR", nfl_team="LAR", yahoo_id="9")
+    db_session.add_all([projected, sleeper_only, dup])
+    db_session.commit()
+
+    assert [(d.id, k.id) for d, k in player_merge.find_yahoo_duplicates(db_session)] == [
+        (dup.id, projected.id)
+    ]
+
+
+def test_a_free_agent_team_does_not_veto_a_match(db_session):
+    keep = Player(full_name="Brock Rechsteiner", position="WR", nfl_team="FA", sleeper_id="1")
+    dup = Player(full_name="Brock Rechsteiner", position="WR", nfl_team="NO", yahoo_id="9")
+    db_session.add_all([keep, dup])
+    db_session.commit()
+
+    assert len(player_merge.find_yahoo_duplicates(db_session)) == 1

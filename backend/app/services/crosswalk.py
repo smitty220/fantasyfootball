@@ -2,8 +2,8 @@
 
 Downloads the ``ff_playerids`` CSV maintained at
 https://github.com/dynastyprocess/data (``files/db_playerids.csv``) and uses
-it to fill in the per-platform IDs on :class:`~app.models.Player` rows, and to
-create rows for players we haven't seen from any other source yet.
+it to fill in the per-platform IDs on :class:`~app.models.Player` rows. It never
+creates players: the Yahoo sync decides which players exist.
 
 The CSV is quite large (~2.5MB) and only needs refreshing occasionally, so a
 copy is cached under ``data/cache/`` and reused for 24h.
@@ -188,34 +188,25 @@ def refresh_crosswalk(db: Session) -> str:
         csv_text = _fetch_csv_text()
         rows = _relevant_rows(csv_text)
 
-        created = 0
+        skipped = 0
         enriched = 0
         for row in rows:
             player = _find_existing_player(db, row)
             if player is None:
-                player = Player(
-                    full_name=row["name"],
-                    position=row["position"],
-                    nfl_team=row["team"],
-                    updated_at=_utcnow(),
-                )
-                for col in ID_COLUMNS:
-                    if row.get(col):
-                        setattr(player, col, row[col])
-                db.add(player)
-                created += 1
-            else:
-                if _enrich_ids(player, row):
-                    enriched += 1
+                # Yahoo decides which players exist; the crosswalk only enriches.
+                skipped += 1
+                continue
+            if _enrich_ids(player, row):
+                enriched += 1
             db.flush()
         db.commit()
 
-        # Second pass: normalized-name matching for players still missing
-        # every platform ID (e.g. rookies not yet in any other source).
+        # Second pass: normalized-name matching for players with no platform
+        # ID beyond Yahoo's (rookies the Yahoo sync created before the CSV
+        # carried their yahoo_id).
         missing_players = (
             db.query(Player)
             .filter(
-                Player.yahoo_id.is_(None),
                 Player.sleeper_id.is_(None),
                 Player.espn_id.is_(None),
                 Player.fantasypros_id.is_(None),
@@ -245,7 +236,7 @@ def refresh_crosswalk(db: Session) -> str:
 
         unmatched = len(missing_players) - name_matched
         log.message = (
-            f"{created} created, {enriched} enriched, {name_matched} name-matched, "
+            f"{enriched} enriched, {skipped} not in Yahoo data (skipped), {name_matched} name-matched, "
             f"{ambiguous} ambiguous, {unmatched} still unmatched"
         )
         return log.message

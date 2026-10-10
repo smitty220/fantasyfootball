@@ -81,7 +81,8 @@ def no_real_download(monkeypatch):
     monkeypatch.setattr(crosswalk, "_fetch_csv_text", _boom)
 
 
-def test_refresh_crosswalk_creates_new_player(db_session, monkeypatch):
+def test_refresh_crosswalk_never_creates_players(db_session, monkeypatch):
+    # Yahoo decides which players exist: a CSV row matching nobody is skipped.
     csv_text = _csv(
         _csv_row(
             "Jahmyr Gibbs",
@@ -96,16 +97,29 @@ def test_refresh_crosswalk_creates_new_player(db_session, monkeypatch):
 
     message = crosswalk.refresh_crosswalk(db_session)
 
-    player = db_session.query(Player).one()
-    assert player.full_name == "Jahmyr Gibbs"
-    assert player.position == "RB"
-    assert player.nfl_team == "DET"
-    assert player.yahoo_id == "12345"
-    assert player.sleeper_id == "9221"
-    assert "1 created" in message
-
+    assert db_session.query(Player).count() == 0
+    assert "1 not in Yahoo data (skipped)" in message
     log = db_session.query(SyncLog).filter(SyncLog.resource == "crosswalk").one()
     assert log.status == "success"
+
+
+def test_refresh_crosswalk_name_matches_a_yahoo_only_rookie(db_session, monkeypatch):
+    # The Yahoo sync created the rookie before the CSV carried his yahoo_id.
+    rookie = Player(full_name="Ashton Jeanty", position="RB", yahoo_id="40001")
+    db_session.add(rookie)
+    db_session.commit()
+
+    csv_text = _csv(
+        _csv_row("Ashton Jeanty", "ashton jeanty", "RB", team="LV",
+                 sleeper_id="12507", fantasypros_id="25000")
+    )
+    monkeypatch.setattr(crosswalk, "_fetch_csv_text", lambda: csv_text)
+
+    crosswalk.refresh_crosswalk(db_session)
+
+    db_session.refresh(rookie)
+    assert (rookie.sleeper_id, rookie.fantasypros_id) == ("12507", "25000")
+    assert rookie.yahoo_id == "40001"
 
 
 def test_refresh_crosswalk_enriches_null_ids_without_overwriting(db_session, monkeypatch):
@@ -179,8 +193,7 @@ def test_refresh_crosswalk_skips_ambiguous_name_match(db_session, monkeypatch):
 
     db_session.refresh(existing)
     assert existing.sleeper_id is None
-    # Both CSV rows also produce new Player rows (no existing match by ID).
-    assert db_session.query(Player).count() == 3
+    assert db_session.query(Player).count() == 1  # neither CSV row creates one
 
 
 def test_refresh_crosswalk_ignores_irrelevant_positions(db_session, monkeypatch):
@@ -193,6 +206,9 @@ def test_refresh_crosswalk_ignores_irrelevant_positions(db_session, monkeypatch)
 
 
 def test_refresh_crosswalk_maps_pk_to_k(db_session, monkeypatch):
+    kicker = Player(full_name="Brandon Aubrey", position="K", yahoo_id="40002")
+    db_session.add(kicker)
+    db_session.commit()
     csv_text = _csv(
         _csv_row("Brandon Aubrey", "brandon aubrey", "PK", team="DAL", sleeper_id="11533")
     )
@@ -200,5 +216,5 @@ def test_refresh_crosswalk_maps_pk_to_k(db_session, monkeypatch):
 
     crosswalk.refresh_crosswalk(db_session)
 
-    player = db_session.query(Player).one()
-    assert player.position == "K"
+    # PK in the CSV must read as K, or the name match would miss him.
+    assert db_session.query(Player).one().sleeper_id == "11533"
