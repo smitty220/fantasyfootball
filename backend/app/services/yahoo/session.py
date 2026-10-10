@@ -68,9 +68,12 @@ class _BearerSession:
         headers: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> httpx.Response:
-        return self._client.get(
-            url, params=params, headers=self._headers(headers), **kwargs
-        )
+        # requests merges ``params`` into any query already on the URL; httpx
+        # replaces it. The library builds some URIs with a query baked in
+        # (league discovery's ``?use_login=1&...``), so merge explicitly.
+        if params:
+            url = str(httpx.URL(url).copy_merge_params(params))
+        return self._client.get(url, headers=self._headers(headers), **kwargs)
 
     def put(
         self,

@@ -88,7 +88,13 @@ def test_library_game_uses_our_session(db_session, yahoo_credentials):
             sc.close()
 
     assert league_keys == ["461.l.12345"]
-    assert route.calls.last.request.headers["authorization"] == "Bearer access-1"
+    request = route.calls.last.request
+    assert request.headers["authorization"] == "Bearer access-1"
+    # The library bakes use_login=1 into the URI and passes format=json as
+    # params; both must survive (httpx alone would drop the former).
+    assert request.url.params["use_login"] == "1"
+    assert request.url.params["seasons"] == "2026"
+    assert request.url.params["format"] == "json"
 
 
 def test_session_refreshes_expired_token_before_request(db_session, yahoo_credentials):
