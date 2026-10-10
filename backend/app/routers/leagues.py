@@ -1,4 +1,4 @@
-"""League read endpoints plus owner-triggered Yahoo sync."""
+"""League read endpoints, owner league settings, and owner-triggered Yahoo sync."""
 
 from __future__ import annotations
 
@@ -73,6 +73,10 @@ class MatchupOut(BaseModel):
     status: str | None = None
 
 
+class LeagueUpdate(BaseModel):
+    is_keeper: bool
+
+
 class DiscoverResponse(BaseModel):
     discovered: int
     leagues: list[LeagueOut]
@@ -96,6 +100,19 @@ def _get_league(db: Session, league_key: str) -> League:
 @router.get("", response_model=list[LeagueOut])
 def list_leagues(db: Session = Depends(get_db)) -> list[League]:
     return db.query(League).order_by(League.season.desc(), League.name).all()
+
+
+@router.put("/{league_key}", response_model=LeagueOut)
+def update_league(
+    league_key: str, payload: LeagueUpdate, db: Session = Depends(get_db)
+) -> League:
+    """Owner-set league flags. Works for any source: Yahoo sync never touches
+    ``is_keeper``, so this is the only way to flag a synced keeper league."""
+    league = _get_league(db, league_key)
+    league.is_keeper = payload.is_keeper
+    db.commit()
+    db.refresh(league)
+    return league
 
 
 @router.post("/discover", response_model=DiscoverResponse)

@@ -76,6 +76,10 @@ export function deleteManualLeague(leagueKey: string): Promise<void> {
   return apiDelete(`/api/manual/leagues/${encodeURIComponent(leagueKey)}`)
 }
 
+export function setLeagueKeeper(leagueKey: string, isKeeper: boolean): Promise<League> {
+  return apiPut(`/api/leagues/${encodeURIComponent(leagueKey)}`, { is_keeper: isKeeper })
+}
+
 export function getTeams(leagueKey: string): Promise<Team[]> {
   return apiGet(`/api/leagues/${encodeURIComponent(leagueKey)}/teams`)
 }

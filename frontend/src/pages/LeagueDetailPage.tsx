@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
-import { createTeam, deleteTeam, getLeagues, getTeams, updateTeam } from '../api/endpoints'
+import { createTeam, deleteTeam, getLeagues, getTeams, setLeagueKeeper, updateTeam } from '../api/endpoints'
 import type { League, Team } from '../api/types'
 import { ApiError } from '../api/client'
 import { Badge, Button, Card, EmptyState, Spinner, TextField } from '../components/ui'
@@ -84,6 +84,16 @@ export function LeagueDetailPage() {
   // Team/roster editing needs both a manual league and edit rights: a viewer
   // sees exactly the read-only view a Yahoo league already gets.
   const isManual = league?.source === 'manual' && canEdit
+
+  async function handleKeeperToggle(isKeeper: boolean) {
+    if (!league) return
+    try {
+      setLeague(await setLeagueKeeper(league.league_key, isKeeper))
+      showSuccess(isKeeper ? 'Marked as a keeper league' : 'No longer a keeper league')
+    } catch (err) {
+      showError(err instanceof ApiError ? err.message : 'Failed to update league')
+    }
+  }
 
   async function handleAddTeam(e: FormEvent) {
     e.preventDefault()
@@ -182,6 +192,16 @@ export function LeagueDetailPage() {
             <Badge tone={league.source === 'manual' ? 'accent' : 'success'}>{league.source}</Badge>
             {league.is_keeper && <Badge tone="warning">Keeper</Badge>}
           </div>
+          {canEdit && (
+            <label className="checkbox-field">
+              <input
+                type="checkbox"
+                checked={league.is_keeper}
+                onChange={(e) => handleKeeperToggle(e.target.checked)}
+              />
+              <span>Keeper league</span>
+            </label>
+          )}
         </div>
       </div>
 

@@ -2,8 +2,9 @@
 
 Lets the owner stand up a league by hand (name, scoring rules, teams,
 rosters) so the evaluators are usable before Yahoo API approval lands.
-Every endpoint here operates only on ``League.source == "manual"`` rows and
-refuses (404/409) to touch anything synced from Yahoo.
+Every write endpoint here operates only on ``League.source == "manual"`` rows
+and refuses (404/409) to touch anything synced from Yahoo; the roster read
+serves any league.
 """
 
 from __future__ import annotations
@@ -340,7 +341,11 @@ def delete_team(team_id: int, db: Session = Depends(get_db)) -> Response:
 
 @router.get("/teams/{team_id}/roster", response_model=list[RosterPlayerOut])
 def get_roster(team_id: int, db: Session = Depends(get_db)) -> list[RosterPlayerOut]:
-    team, _league = _get_manual_team(db, team_id)
+    # Read-only, so unlike the rest of this router it serves any league: a
+    # Yahoo sync fills ``LeaguePlayer.on_team_id`` the same way manual entry does.
+    team = db.query(Team).filter(Team.id == team_id).one_or_none()
+    if team is None:
+        raise HTTPException(status_code=404, detail=f"Unknown team {team_id}")
 
     rows = (
         db.query(LeaguePlayer, Player)

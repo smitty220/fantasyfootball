@@ -111,6 +111,28 @@ def test_list_leagues(client, seeded):
     assert body[0]["current_week"] == 3
 
 
+def test_update_league_sets_keeper_flag(client, seeded):
+    response = client.put("/api/leagues/461.l.12345", json={"is_keeper": True})
+    assert response.status_code == 200
+    assert response.json()["is_keeper"] is True
+    assert client.get("/api/leagues").json()[0]["is_keeper"] is True
+
+    client.put("/api/leagues/461.l.12345", json={"is_keeper": False})
+    assert client.get("/api/leagues").json()[0]["is_keeper"] is False
+
+
+def test_update_league_unknown_404(client):
+    response = client.put("/api/leagues/nope", json={"is_keeper": True})
+    assert response.status_code == 404
+
+
+def test_synced_team_roster_is_readable(client, seeded):
+    home_id = next(t["id"] for t in client.get("/api/leagues/461.l.12345/teams").json()
+                   if t["is_my_team"])
+    roster = client.get(f"/api/manual/teams/{home_id}/roster").json()
+    assert [p["full_name"] for p in roster] == ["Rostered TE"]
+
+
 def test_list_leagues_empty(client):
     assert client.get("/api/leagues").json() == []
 
