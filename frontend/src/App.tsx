@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react'
-import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
+import { NavLink, Route, Routes } from 'react-router-dom'
 import './App.css'
 import { getHealth } from './api/endpoints'
 import { LeaguesPage } from './pages/LeaguesPage'
-import { NewLeagueWizard } from './pages/NewLeagueWizard'
 import { LeagueDetailPage } from './pages/LeagueDetailPage'
 import { TradeAnalyzerPage } from './pages/TradeAnalyzerPage'
 import { MatchupPage } from './pages/MatchupPage'
@@ -17,7 +16,7 @@ type HealthState = 'checking' | 'ok' | 'error'
 
 function App() {
   const [health, setHealth] = useState<HealthState>('checking')
-  const { role, canEdit, logout } = useSession()
+  const { role, logout } = useSession()
 
   useEffect(() => {
     getHealth()
@@ -52,8 +51,6 @@ function App() {
       <main className="app-main">
         <Routes>
           <Route path="/" element={<LeaguesPage />} />
-          {/* Nothing links here for a viewer; this catches a typed-in URL. */}
-          <Route path="/leagues/new" element={canEdit ? <NewLeagueWizard /> : <Navigate to="/" replace />} />
           <Route path="/leagues/:leagueKey" element={<LeagueDetailPage />} />
           <Route path="/leagues/:leagueKey/trade" element={<TradeAnalyzerPage />} />
           <Route path="/leagues/:leagueKey/matchup" element={<MatchupPage />} />

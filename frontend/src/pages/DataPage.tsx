@@ -9,14 +9,33 @@ import { useSession } from '../components/sessionContext'
 
 const SOURCES: { id: DataSourceId; name: string; description: string; button?: string }[] = [
   {
+    id: 'yahoo_leagues',
+    name: 'Yahoo league sync',
+    description:
+      'Settings, rosters, standings and this week\'s matchups for every Yahoo league; free agents and draft about hourly. Yahoo is the source of truth for players.',
+    button: 'Sync now',
+  },
+  {
+    id: 'yahoo_schedule',
+    name: 'Yahoo season schedule',
+    description: 'Full-season matchups (every week, playoffs included) for every Yahoo league.',
+    button: 'Sync schedule',
+  },
+  {
+    id: 'yahoo_discover',
+    name: 'Find Yahoo leagues',
+    description: 'Looks for new Yahoo leagues on your account and adds them.',
+    button: 'Find leagues',
+  },
+  {
     id: 'crosswalk',
     name: 'Player ID crosswalk',
-    description: 'Maps player identities across Yahoo, Sleeper, and FantasyCalc so data can be joined together.',
+    description: 'Adds Sleeper, ESPN, FantasyPros and gsis IDs to Yahoo players so projections and values can attach. Never adds players.',
   },
   {
     id: 'sleeper_players',
     name: 'Sleeper players',
-    description: 'Player metadata: names, positions, NFL teams, and injury status.',
+    description: 'Adds Sleeper IDs (for trending) and fills missing details on Yahoo players. Never adds players.',
   },
   {
     id: 'sleeper_trending',
@@ -49,28 +68,10 @@ const SOURCES: { id: DataSourceId; name: string; description: string; button?: s
     description: 'Current-week expert-consensus projections (requires API key).',
   },
   {
-    id: 'yahoo_access_check',
-    name: 'Yahoo API access',
-    description: 'Probes whether Yahoo has activated Fantasy API access for our app yet.',
-  },
-  {
-    id: 'yahoo_leagues',
-    name: 'Yahoo league sync',
-    description:
-      'Rosters, matchups, free agents and draft for every Yahoo league. Can take a minute or two to run.',
-    button: 'Sync now',
-  },
-  {
-    id: 'yahoo_schedule',
-    name: 'Yahoo season schedule',
-    description: 'Full-season matchups (every week, playoffs included) for every Yahoo league.',
-    button: 'Sync schedule',
-  },
-  {
-    id: 'yahoo_discover',
-    name: 'Find Yahoo leagues',
-    description: 'Looks for new Yahoo leagues on your account and adds them.',
-    button: 'Find leagues',
+    id: 'db_backup',
+    name: 'Database backup',
+    description: 'Consistent copy of the database into data/backups/; the newest 14 are kept.',
+    button: 'Back up now',
   },
   {
     id: 'nfl_actuals',
@@ -98,7 +99,7 @@ const REFRESH_INTERVAL_LABEL: Record<DataSourceId, string> = {
   fantasypros_week_projections: '1h',
   nfl_schedule: 'week',
   nfl_actuals: '2x week',
-  yahoo_access_check: '6h',
+  db_backup: 'day',
   yahoo_leagues: '15m',
   yahoo_schedule: 'day',
   yahoo_discover: 'day',
@@ -197,7 +198,7 @@ export function DataPage() {
       </div>
       <p className="field-hint">
         {canEdit
-          ? 'Recommended refresh order: crosswalk → Sleeper players → FantasyCalc. Refreshes can take up to a couple of minutes.'
+          ? 'Everything refreshes on its own schedule; use a button to refresh now. Some refreshes take a minute or two.'
           : 'How fresh each data source is. Only the league owner can trigger a refresh.'}
       </p>
 

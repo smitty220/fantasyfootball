@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { getDashboard, getLeagues, getYahooStatus } from '../api/endpoints'
 import type { DashboardLeague, League } from '../api/types'
 import { ApiError } from '../api/client'
-import { Badge, Banner, Button, Card, EmptyState, Spinner } from '../components/ui'
+import { Badge, Banner, Card, EmptyState, Spinner } from '../components/ui'
 import { RosterEditor } from '../components/RosterEditor'
 import { useToast } from '../components/toastContext'
 import { useSession } from '../components/sessionContext'
@@ -58,17 +58,12 @@ export function LeaguesPage() {
     <div className="page page-wide">
       <div className="page-header">
         <h1>Leagues</h1>
-        {canEdit && (
-          <Link to="/leagues/new">
-            <Button variant="primary">New league (manual)</Button>
-          </Link>
-        )}
       </div>
 
       {/* Only the owner can do anything about a missing Yahoo connection. */}
       {canEdit && yahooConnected === false && !bannerDismissed && (
         <Banner onDismiss={() => setBannerDismissed(true)}>
-          Yahoo not connected — manual leagues only for now.
+          Yahoo not connected — leagues sync once it is connected.
         </Banner>
       )}
 
@@ -80,7 +75,7 @@ export function LeaguesPage() {
 
       {!loading && leagues !== null && leagues.length === 0 && (
         <EmptyState>
-          {canEdit ? 'No leagues yet. Create a manual league to get started.' : 'No leagues yet.'}
+          No leagues yet.
         </EmptyState>
       )}
 
@@ -108,7 +103,6 @@ export function LeaguesPage() {
                     leagueKey={league.league_key}
                     teamId={myTeam.id}
                     teamName={myTeam.name}
-                    editable={canEdit && league.source === 'manual'}
                     isYahoo={league.source === 'yahoo'}
                   />
                 ) : (

@@ -141,12 +141,6 @@
   gap: 16px;
 }
 
-.page-narrow {
-  max-width: 560px;
-  margin: 0 auto;
-  width: 100%;
-}
-
 .page-header {
   display: flex;
   align-items: center;
@@ -407,18 +401,6 @@ a.dash-row-link {
   border-color: transparent;
 }
 
-.link-button {
-  background: none;
-  border: none;
-  color: var(--accent);
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  padding: 4px 0;
-  align-self: flex-start;
-  text-decoration: underline;
-}
-
 /* Forms */
 .field {
   display: flex;
@@ -467,17 +449,6 @@ a.dash-row-link {
   font-size: 14px;
   margin-bottom: 12px;
   cursor: pointer;
-}
-
-.inline-form {
-  display: flex;
-  gap: 12px;
-  align-items: flex-end;
-  flex-wrap: wrap;
-  border: 1px dashed var(--border);
-  padding: 12px;
-  border-radius: 8px;
-  margin-bottom: 14px;
 }
 
 .inline-error {
@@ -591,59 +562,6 @@ a.dash-row-link {
   cursor: pointer;
   font-size: 16px;
   line-height: 1;
-}
-
-/* Wizard */
-.wizard-steps {
-  display: flex;
-  gap: 20px;
-  margin-bottom: 8px;
-}
-
-.step-dot {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--text);
-}
-
-.step-dot-circle {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--border);
-  display: inline-block;
-}
-
-.step-dot-active .step-dot-circle {
-  background: var(--accent);
-}
-.step-dot-active {
-  color: var(--text-h);
-  font-weight: 600;
-}
-.step-dot-done .step-dot-circle {
-  background: var(--accent-border);
-}
-
-.wizard-step {
-  display: flex;
-  flex-direction: column;
-}
-
-.wizard-actions {
-  display: flex;
-  gap: 10px;
-  justify-content: flex-end;
-  margin-top: 8px;
-}
-
-.scoring-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 4px 16px;
-  margin: 8px 0;
 }
 
 /* Detail page */
@@ -764,11 +682,6 @@ a.tab {
   color: var(--text);
 }
 
-.team-actions {
-  display: flex;
-  gap: 6px;
-}
-
 /* Roster editor */
 .roster-editor {
   display: flex;
@@ -821,45 +734,6 @@ a.tab {
   gap: 6px;
   font-size: 12px;
   color: var(--text);
-}
-
-.player-search {
-  border-top: 1px solid var(--border);
-  padding-top: 12px;
-}
-
-.search-results {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  overflow: hidden;
-  max-height: 320px;
-  overflow-y: auto;
-}
-
-.search-result-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  cursor: pointer;
-  border-bottom: 1px solid var(--border);
-}
-
-.search-result-item:last-child {
-  border-bottom: none;
-}
-
-.search-result-item:hover {
-  background: var(--accent-bg);
-}
-
-.add-hint {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--accent);
 }
 
 /* Tables */
@@ -1012,7 +886,7 @@ a.tab {
 .lineup-row,
 .lineup-columns-header {
   display: grid;
-  grid-template-columns: 62px 40px minmax(0, 1fr) 44px 50px 46px 46px 54px 58px minmax(24px, auto);
+  grid-template-columns: 62px 40px minmax(0, 1fr) 44px 50px 46px 46px 54px 58px;
   align-items: center;
   gap: 8px;
 }
@@ -1020,7 +894,7 @@ a.tab {
 @media (max-width: 520px) {
   .lineup-row,
   .lineup-columns-header {
-    grid-template-columns: 54px 36px minmax(0, 1fr) 40px 40px 40px minmax(24px, auto);
+    grid-template-columns: 54px 36px minmax(0, 1fr) 40px 40px 40px;
   }
 
   .lineup-col-pct,
@@ -1179,7 +1053,6 @@ a.tab {
   font-weight: 700;
 }
 
-
 .lineup-row-team {
   font-size: 12px;
   color: var(--text);
@@ -1198,39 +1071,10 @@ a.tab {
   font-variant-numeric: tabular-nums;
 }
 
-.lineup-row-actions {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.lineup-row-remove {
-  padding: 2px 8px;
-  font-size: 13px;
-  line-height: 1.2;
-}
-
 .lineup-row-empty-label {
   grid-column: 2 / -1;
   font-size: 12px;
   color: var(--text);
-}
-
-.lineup-row-eligible {
-  border-color: var(--accent-border);
-  background: var(--accent-bg);
-}
-
-.lineup-row-ineligible {
-  opacity: 0.45;
-}
-
-.lineup-row-active {
-  border-color: var(--accent);
-}
-
-.lineup-row-selected {
-  border-color: var(--accent);
-  box-shadow: inset 0 0 0 1px var(--accent);
 }
 
 .lineup-bench-section {
@@ -1240,11 +1084,6 @@ a.tab {
 
 .lineup-bench-title {
   cursor: default;
-}
-
-.lineup-bench-title-target {
-  cursor: pointer;
-  color: var(--accent);
 }
 
 .lineup-bench {
@@ -1669,106 +1508,6 @@ a.tab {
   border-radius: 6px;
 }
 
-/* Import roster panel */
-.import-roster-panel {
-  margin-bottom: 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  border: 1px dashed var(--border);
-}
-
-.import-roster-textarea {
-  width: 100%;
-  resize: vertical;
-  font-family: var(--mono);
-  font-size: 13px;
-  line-height: 145%;
-  min-height: 220px;
-}
-
-.import-roster-actions {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.import-report {
-  border-top: 1px solid var(--border);
-  padding-top: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.import-report-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-
-.import-report-table th {
-  text-align: left;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-  color: var(--text);
-  padding: 4px 8px;
-  border-bottom: 1px solid var(--border);
-}
-
-.import-report-table td {
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--border);
-  color: var(--text-h);
-  vertical-align: middle;
-}
-
-.import-report-counts {
-  display: flex;
-  gap: 8px;
-  white-space: nowrap;
-}
-
-.import-count-added {
-  color: var(--success);
-  font-weight: 600;
-}
-
-.import-count-removed {
-  color: var(--danger);
-  font-weight: 600;
-}
-
-.import-count-kept {
-  color: var(--text);
-}
-
-.import-report-lineup {
-  text-align: center;
-}
-
-.import-report-unmatched-row td {
-  background: var(--warning-bg);
-  border-bottom: 1px solid var(--border);
-}
-
-.import-report-unmatched-label {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--warning);
-  margin-right: 8px;
-}
-
-.import-report-unmatched-row .badge {
-  margin-right: 6px;
-}
-
-.import-report-summary {
-  font-size: 13px;
-  color: var(--warning);
-  font-weight: 600;
-}
-
 /* Standings & odds page */
 .standings-row-mine {
   background: var(--accent-bg);
@@ -1794,50 +1533,6 @@ a.tab {
   font-variant-numeric: tabular-nums;
   font-weight: 600;
   color: var(--text-h);
-}
-
-.standings-week-field {
-  margin-bottom: 0;
-}
-
-.standings-actions {
-  margin-top: 12px;
-}
-
-.matchup-edit-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.matchup-edit-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 84px auto 84px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-}
-
-@media (max-width: 640px) {
-  .matchup-edit-row {
-    grid-template-columns: 1fr;
-  }
-}
-
-.matchup-edit-score {
-  text-align: center;
-}
-
-.matchup-edit-vs {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text);
-  text-align: center;
-}
-
-.matchup-edit-remove {
-  padding: 2px 8px;
-  font-size: 13px;
-  line-height: 1.2;
 }
 
 /* Home page: one full lineup board per league, side by side on wide screens. */

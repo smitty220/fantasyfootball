@@ -1,15 +1,13 @@
 import { useEffect, useState } from 'react'
-import type { FormEvent } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
-import { createTeam, deleteTeam, getLeagues, getTeams, setLeagueKeeper, updateTeam } from '../api/endpoints'
+import { getLeagues, getTeams, setLeagueKeeper } from '../api/endpoints'
 import type { League, Team } from '../api/types'
 import { ApiError } from '../api/client'
-import { Badge, Button, Card, EmptyState, Spinner, TextField } from '../components/ui'
+import { Badge, Card, EmptyState, Spinner } from '../components/ui'
 import { useToast } from '../components/toastContext'
 import { useSession } from '../components/sessionContext'
 import { RosterEditor } from '../components/RosterEditor'
 import { FreeAgentsPanel } from '../components/FreeAgentsPanel'
-import { ImportRosterPanel } from '../components/ImportRosterPanel'
 
 type Tab = 'teams' | 'free-agents'
 type FaSort = 'week' | 'ros'
@@ -42,16 +40,6 @@ export function LeagueDetailPage() {
       setInitialFaSort(parseFaSort(searchParams.get('sort')))
     }
   }, [searchParams])
-  const [editingTeamId, setEditingTeamId] = useState<number | null>(null)
-  const [editName, setEditName] = useState('')
-  const [showAddForm, setShowAddForm] = useState(false)
-  const [newTeamName, setNewTeamName] = useState('')
-  const [newManagerName, setNewManagerName] = useState('')
-  const [busyTeamId, setBusyTeamId] = useState<number | null>(null)
-  const [addingTeam, setAddingTeam] = useState(false)
-  const [showImportPanel, setShowImportPanel] = useState(false)
-  const [rosterRefreshKey, setRosterRefreshKey] = useState(0)
-
   function loadTeams() {
     getTeams(leagueKey)
       .then((loaded) => {
@@ -81,10 +69,6 @@ export function LeagueDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leagueKey])
 
-  // Team/roster editing needs both a manual league and edit rights: a viewer
-  // sees exactly the read-only view a Yahoo league already gets.
-  const isManual = league?.source === 'manual' && canEdit
-
   async function handleKeeperToggle(isKeeper: boolean) {
     if (!league) return
     try {
@@ -92,74 +76,6 @@ export function LeagueDetailPage() {
       showSuccess(isKeeper ? 'Marked as a keeper league' : 'No longer a keeper league')
     } catch (err) {
       showError(err instanceof ApiError ? err.message : 'Failed to update league')
-    }
-  }
-
-  async function handleAddTeam(e: FormEvent) {
-    e.preventDefault()
-    if (!newTeamName.trim()) return
-    setAddingTeam(true)
-    try {
-      await createTeam(leagueKey, { name: newTeamName.trim(), manager_name: newManagerName.trim() || undefined })
-      showSuccess('Team added')
-      setNewTeamName('')
-      setNewManagerName('')
-      setShowAddForm(false)
-      loadTeams()
-    } catch (err) {
-      showError(err instanceof ApiError ? err.message : 'Failed to add team')
-    } finally {
-      setAddingTeam(false)
-    }
-  }
-
-  async function handleRename(team: Team) {
-    if (!editName.trim() || editName.trim() === team.name) {
-      setEditingTeamId(null)
-      return
-    }
-    setBusyTeamId(team.id)
-    try {
-      await updateTeam(team.id, { name: editName.trim() })
-      showSuccess('Team renamed')
-      setEditingTeamId(null)
-      loadTeams()
-    } catch (err) {
-      showError(err instanceof ApiError ? err.message : 'Failed to rename team')
-    } finally {
-      setBusyTeamId(null)
-    }
-  }
-
-  async function handleDelete(team: Team) {
-    if (!window.confirm(`Delete team "${team.name}"? This cannot be undone.`)) return
-    setBusyTeamId(team.id)
-    try {
-      await deleteTeam(team.id)
-      showSuccess('Team deleted')
-      if (selectedTeamId === team.id) setSelectedTeamId(null)
-      loadTeams()
-    } catch (err) {
-      showError(err instanceof ApiError ? err.message : 'Failed to delete team')
-    } finally {
-      setBusyTeamId(null)
-    }
-  }
-
-  function handleRosterImported() {
-    loadTeams()
-    setRosterRefreshKey((k) => k + 1)
-  }
-
-  async function handleToggleMyTeam(team: Team) {
-    setBusyTeamId(team.id)
-    try {
-      await updateTeam(team.id, { is_my_team: !team.is_my_team })
-      loadTeams()
-    } catch (err) {
-      showError(err instanceof ApiError ? err.message : 'Failed to update team')
-    } finally {
-      setBusyTeamId(null)
     }
   }
 
@@ -235,39 +151,7 @@ export function LeagueDetailPage() {
           <Card>
             <div className="panel-header">
               <h2>Teams</h2>
-              {isManual && (
-                <div className="panel-header-actions">
-                  <Button onClick={() => setShowImportPanel((v) => !v)}>
-                    {showImportPanel ? 'Hide import' : 'Import rosters from Yahoo'}
-                  </Button>
-                  <Button variant="primary" onClick={() => setShowAddForm((v) => !v)}>
-                    {showAddForm ? 'Cancel' : 'Add team'}
-                  </Button>
-                </div>
-              )}
             </div>
-
-            {isManual && showImportPanel && (
-              <ImportRosterPanel
-                leagueKey={leagueKey}
-                onImported={handleRosterImported}
-                onClose={() => setShowImportPanel(false)}
-              />
-            )}
-
-            {showAddForm && (
-              <form className="inline-form" onSubmit={handleAddTeam}>
-                <TextField label="Team name" value={newTeamName} onChange={(e) => setNewTeamName(e.target.value)} />
-                <TextField
-                  label="Manager (optional)"
-                  value={newManagerName}
-                  onChange={(e) => setNewManagerName(e.target.value)}
-                />
-                <Button type="submit" variant="primary" busy={addingTeam}>
-                  Save
-                </Button>
-              </form>
-            )}
 
             {teams === null && (
               <div className="loading-row">
@@ -284,67 +168,24 @@ export function LeagueDetailPage() {
                     key={team.id}
                     className={`team-list-item${selectedTeamId === team.id ? ' team-list-item-active' : ''}`}
                   >
-                    <button
-                      type="button"
+                    <span
                       className="star-toggle"
-                      onClick={() => handleToggleMyTeam(team)}
-                      disabled={!isManual || busyTeamId === team.id}
-                      title={team.is_my_team ? 'My team' : 'Mark as my team'}
-                      aria-label={team.is_my_team ? 'My team' : 'Mark as my team'}
+                      title={team.is_my_team ? 'My team' : undefined}
+                      aria-label={team.is_my_team ? 'My team' : undefined}
                     >
                       {team.is_my_team ? '★' : '☆'}
-                    </button>
+                    </span>
 
                     <div className="team-list-main" onClick={() => setSelectedTeamId(team.id)}>
-                      {editingTeamId === team.id ? (
-                        <input
-                          className="field-input"
-                          autoFocus
-                          value={editName}
-                          onClick={(e) => e.stopPropagation()}
-                          onChange={(e) => setEditName(e.target.value)}
-                          onBlur={() => handleRename(team)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') handleRename(team)
-                            if (e.key === 'Escape') setEditingTeamId(null)
-                          }}
-                        />
-                      ) : (
-                        <>
-                          <span className="team-name">{team.name}</span>
-                          {team.manager_name && <span className="team-manager">{team.manager_name}</span>}
-                          <span className="team-record">
-                            {team.wins}-{team.losses}
-                            {team.ties ? `-${team.ties}` : ''}
-                            {team.rank != null && ` · #${team.rank}`}
-                          </span>
-                        </>
-                      )}
+                      <span className="team-name">{team.name}</span>
+                      {team.manager_name && <span className="team-manager">{team.manager_name}</span>}
+                      <span className="team-record">
+                        {team.wins}-{team.losses}
+                        {team.ties ? `-${team.ties}` : ''}
+                        {team.rank != null && ` · #${team.rank}`}
+                      </span>
                     </div>
 
-                    {isManual && editingTeamId !== team.id && (
-                      <div className="team-actions">
-                        <Button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            setEditingTeamId(team.id)
-                            setEditName(team.name)
-                          }}
-                        >
-                          Rename
-                        </Button>
-                        <Button
-                          variant="danger"
-                          busy={busyTeamId === team.id}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            handleDelete(team)
-                          }}
-                        >
-                          Delete
-                        </Button>
-                      </div>
-                    )}
                   </li>
                 ))}
               </ul>
@@ -354,11 +195,10 @@ export function LeagueDetailPage() {
           <Card>
             {selectedTeam ? (
               <RosterEditor
-                key={`${selectedTeam.id}:${rosterRefreshKey}`}
+                key={selectedTeam.id}
                 leagueKey={leagueKey}
                 teamId={selectedTeam.id}
                 teamName={selectedTeam.name}
-                editable={isManual}
                 isYahoo={league?.source === 'yahoo'}
               />
             ) : (

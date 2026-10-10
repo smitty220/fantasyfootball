@@ -1,29 +1,26 @@
 # Gridiron HQ
 
-A self-hosted fantasy football helper app, designed to run on a Raspberry Pi
-and reachable from anywhere over HTTPS via
-[Tailscale Funnel](https://tailscale.com/kb/1223/funnel) — no cloud hosting,
-no port forwarding. See [deploy/pi-setup.md](deploy/pi-setup.md) for the full
-setup walkthrough.
+A self-hosted fantasy football helper app. It runs as a Docker Compose stack on
+the homelab server — see [deploy/server-setup.md](deploy/server-setup.md) — and
+is reachable on the home LAN only for now (no login yet).
 
-It connects to your Yahoo Fantasy leagues and joins that with player
-data/projections from FantasyPros, Sleeper, ESPN and FantasyCalc (all synced
-into a local SQLite database on a schedule, so the UI stays fast and doesn't
-hammer rate-limited APIs on every page load). On top of that data it gives
-you:
+It syncs your Yahoo Fantasy leagues (the source of truth for leagues, rosters,
+players, schedule, roster positions and scoring) and joins them with
+projections and values from FantasyPros, ESPN, Sleeper and FantasyCalc, all
+synced into a local SQLite database on a schedule so the UI stays fast. On top
+of that it gives you:
 
-- **Leagues** — connect one or more Yahoo leagues (keeper or redraft), view
-  teams, rosters, and settings.
-- **Free agents** — browse the waiver wire with projections and ownership
-  trends layered in.
-- **Trade analyzer** — evaluate proposed trades using projection-backed
-  values, scored under your league's actual scoring rules.
-- **Matchup preview** — see your weekly matchup with projected points per
-  player.
-- **Lineup editor** — set your lineup for the week from the same roster/
-  projection data.
-- **Auto-refreshing data** — a background scheduler keeps projections,
-  trade values, and ownership data current without manual intervention.
+- **Leagues** — every Yahoo league you're in, with teams, rosters and records.
+- **Lineups** — your lineup as set in Yahoo, with a toggle to this week's
+  optimal lineup and flags for bye/injured starters and better bench or
+  free-agent options. (The app never changes anything in Yahoo.)
+- **Free agents** — the waiver wire with projections, trade values and trends.
+- **Trade analyzer / finder** — projection- and FantasyCalc-backed trade values
+  for your league's format (team count, superflex, PPR).
+- **Matchup preview** — any week's games, opening on yours this week.
+- **Standings & playoff odds** — Monte Carlo odds on the real remaining schedule.
+- **Auto-refreshing data** — Yahoo every 15 minutes, projections hourly, the
+  rest daily or weekly; see the Data page.
 
 ## Stack
 
@@ -87,38 +84,15 @@ reads it directly, relative to its `backend/` working directory) and Docker
 Compose (which bind-mounts this exact path into the container — see
 `docker-compose.yml`), so there's never a second copy to keep in sync.
 
-## Home Assistant OS deployment (local add-on)
-
-If the Pi runs Home Assistant OS, Gridiron HQ installs as a **local add-on**
-instead — HAOS owns Docker, so there's no Compose involved. `addons/gridironhq/`
-holds the add-on manifest, Dockerfile and entrypoint; `deploy/build-addon.sh`
-stages `backend/` and `frontend/` inside it (the Supervisor builds a local
-add-on with the add-on folder as the whole build context), after which the
-folder is copied into HAOS's `/addons` share and installed from the Add-on
-Store. Credentials come from the add-on's options page rather than
-`secrets.env`, and the database lives in `/addon_configs/local_gridironhq/`
-where the Samba add-on can reach it.
-
-Full walkthrough: **[deploy/pi-setup.md](deploy/pi-setup.md#home-assistant-os-add-on)**;
-add-on-specific notes in [addons/gridironhq/DOCS.md](addons/gridironhq/DOCS.md).
-
-## Raspberry Pi deployment (Docker Compose + Tailscale Funnel)
+## Deployment
 
 The app ships as a single container: a multi-stage `backend/Dockerfile`
 builds the frontend and bundles it with the backend, which serves both the
-API and the static UI. Images use the official multi-arch
-`node:22-slim` and `python:3.12-slim` bases, so this builds and runs on
-`linux/arm64` (Raspberry Pi 4/5) as well as `amd64`.
+API and the static UI. SQLite data persists on the host in `./data`; Alembic
+migrations run on every startup, and the app keeps rolling backups in
+`data/backups/`.
 
-```bash
-docker compose up -d --build
-```
-
-The app is then available at `http://<pi-hostname>:8000`. SQLite data
-persists on the host in `./data`, mounted into the container; Alembic
-migrations run automatically against it on every startup.
-
-For the full Raspberry Pi walkthrough — installing Docker and Tailscale,
-first-time data sync, and exposing the app to the internet at
-`https://<your-pi>.<your-tailnet>.ts.net` via `tailscale funnel` — see
-**[deploy/pi-setup.md](deploy/pi-setup.md)**.
+The live deployment is the homelab server stack:
+**[deploy/server-setup.md](deploy/server-setup.md)**. The older Raspberry Pi /
+Home Assistant OS add-on paths ([deploy/pi-setup.md](deploy/pi-setup.md),
+`addons/gridironhq/`) are kept for reference only.

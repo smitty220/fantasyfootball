@@ -1,7 +1,5 @@
-import { apiDelete, apiGet, apiPost, apiPut, buildQuery } from './client'
+import { apiGet, apiPost, apiPut, buildQuery } from './client'
 import type {
-  CreateManualLeaguePayload,
-  CreateTeamPayload,
   DashboardResponse,
   DataRefreshResult,
   DataScheduleRow,
@@ -10,18 +8,12 @@ import type {
   FreeAgent,
   FreeAgentsEvalResponse,
   HealthResponse,
-  ImportRosterPasteResponse,
   League,
   LeagueAccuracyResponse,
-  LeagueDetail,
-  LineupAssignment,
   LineupMode,
   Matchup,
-  ManualMatchup,
-  PlayerSearchResult,
   PlayoffOddsResponse,
   ProjectionSourcesResponse,
-  PutManualMatchupsPayload,
   RosterPlayer,
   SessionLoginResponse,
   SessionMe,
@@ -31,8 +23,6 @@ import type {
   TradeEvaluatePayload,
   TradeEvaluateResponse,
   TradeFinderResponse,
-  UpdateManualLeaguePayload,
-  UpdateTeamPayload,
   YahooStatus,
 } from './types'
 
@@ -66,18 +56,6 @@ export function getDashboard(sources?: string[]): Promise<DashboardResponse> {
   )
 }
 
-export function createManualLeague(payload: CreateManualLeaguePayload): Promise<LeagueDetail> {
-  return apiPost('/api/manual/leagues', payload)
-}
-
-export function updateManualLeague(leagueKey: string, payload: UpdateManualLeaguePayload): Promise<LeagueDetail> {
-  return apiPut(`/api/manual/leagues/${encodeURIComponent(leagueKey)}`, payload)
-}
-
-export function deleteManualLeague(leagueKey: string): Promise<void> {
-  return apiDelete(`/api/manual/leagues/${encodeURIComponent(leagueKey)}`)
-}
-
 export function setLeagueKeeper(leagueKey: string, isKeeper: boolean): Promise<League> {
   return apiPut(`/api/leagues/${encodeURIComponent(leagueKey)}`, { is_keeper: isKeeper })
 }
@@ -90,36 +68,8 @@ export function getTeams(leagueKey: string): Promise<Team[]> {
   return apiGet(`/api/leagues/${encodeURIComponent(leagueKey)}/teams`)
 }
 
-export function importRosterPaste(leagueKey: string, text: string): Promise<ImportRosterPasteResponse> {
-  return apiPost(`/api/manual/leagues/${encodeURIComponent(leagueKey)}/import-roster-paste`, { text })
-}
-
-export function createTeam(leagueKey: string, payload: CreateTeamPayload): Promise<Team> {
-  return apiPost(`/api/manual/leagues/${encodeURIComponent(leagueKey)}/teams`, payload)
-}
-
-export function updateTeam(teamId: number, payload: UpdateTeamPayload): Promise<Team> {
-  return apiPut(`/api/manual/teams/${teamId}`, payload)
-}
-
-export function deleteTeam(teamId: number): Promise<void> {
-  return apiDelete(`/api/manual/teams/${teamId}`)
-}
-
 export function getRoster(teamId: number): Promise<RosterPlayer[]> {
   return apiGet(`/api/manual/teams/${teamId}/roster`)
-}
-
-export function addRosterPlayer(teamId: number, playerId: string): Promise<RosterPlayer> {
-  return apiPost(`/api/manual/teams/${teamId}/roster`, { player_id: playerId })
-}
-
-export function removeRosterPlayer(teamId: number, playerId: string): Promise<void> {
-  return apiDelete(`/api/manual/teams/${teamId}/roster/${encodeURIComponent(playerId)}`)
-}
-
-export function searchPlayers(q: string, position?: string, limit = 20): Promise<PlayerSearchResult[]> {
-  return apiGet(`/api/players/search${buildQuery({ q, position, limit })}`)
 }
 
 export function getFreeAgents(leagueKey: string, position?: string, limit = 50): Promise<FreeAgent[]> {
@@ -153,14 +103,6 @@ export function getTeamLineup(
       lineup: lineup === 'optimal' ? 'optimal' : undefined,
     })}`,
   )
-}
-
-export function putLineup(teamId: number, assignments: LineupAssignment[]): Promise<TeamLineupResponse> {
-  return apiPut(`/api/manual/teams/${teamId}/lineup`, { assignments })
-}
-
-export function clearLineup(teamId: number): Promise<void> {
-  return apiDelete(`/api/manual/teams/${teamId}/lineup`)
 }
 
 export function evaluateTrade(leagueKey: string, payload: TradeEvaluatePayload): Promise<TradeEvaluateResponse> {
@@ -212,18 +154,3 @@ export function getPlayoffOdds(leagueKey: string, sources?: string[]): Promise<P
   )
 }
 
-export function getManualMatchups(leagueKey: string, week: number): Promise<ManualMatchup[]> {
-  return apiGet(`/api/manual/leagues/${encodeURIComponent(leagueKey)}/matchups${buildQuery({ week })}`)
-}
-
-export function putManualMatchups(
-  leagueKey: string,
-  week: number,
-  payload: PutManualMatchupsPayload,
-): Promise<ManualMatchup[]> {
-  return apiPut(`/api/manual/leagues/${encodeURIComponent(leagueKey)}/matchups/${week}`, payload)
-}
-
-export function deleteManualMatchups(leagueKey: string, week: number): Promise<void> {
-  return apiDelete(`/api/manual/leagues/${encodeURIComponent(leagueKey)}/matchups/${week}`)
-}

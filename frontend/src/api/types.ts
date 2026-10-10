@@ -13,7 +13,6 @@ export interface SessionLoginResponse {
 }
 
 export type LeagueSource = 'manual' | 'yahoo'
-export type ScoringPreset = 'standard' | 'half_ppr' | 'full_ppr'
 
 export interface ScoringRules {
   per_stat: Record<string, number>
@@ -48,24 +47,6 @@ export interface LeagueDetail extends League {
   roster_slots?: RosterSlots
 }
 
-export interface CreateManualLeaguePayload {
-  name: string
-  season: number
-  is_keeper: boolean
-  num_teams: number
-  scoring_preset?: ScoringPreset
-  scoring_rules?: ScoringRules
-  roster_slots?: RosterSlots
-}
-
-export interface UpdateManualLeaguePayload {
-  name?: string
-  is_keeper?: boolean
-  num_teams?: number
-  scoring_rules?: ScoringRules
-  roster_slots?: RosterSlots
-}
-
 export interface Team {
   id: number
   team_key: string
@@ -78,18 +59,6 @@ export interface Team {
   rank?: number | null
 }
 
-export interface CreateTeamPayload {
-  name: string
-  manager_name?: string
-  is_my_team?: boolean
-}
-
-export interface UpdateTeamPayload {
-  name?: string
-  manager_name?: string
-  is_my_team?: boolean
-}
-
 export type InjuryStatus = string | null
 
 export interface RosterPlayer {
@@ -98,15 +67,6 @@ export interface RosterPlayer {
   position: string
   nfl_team: string | null
   injury_status: InjuryStatus
-}
-
-export interface PlayerSearchResult {
-  id: string
-  full_name: string
-  position: string
-  nfl_team: string | null
-  injury_status: InjuryStatus
-  trade_value?: number | null
 }
 
 export interface FreeAgent {
@@ -199,11 +159,6 @@ export interface TeamLineupResponse {
   bench: LineupPlayer[]
 }
 
-export interface LineupAssignment {
-  player_id: number
-  slot: string
-}
-
 export interface TradeSidePayload {
   team_id: number
   player_ids: number[]
@@ -294,7 +249,7 @@ export type DataSourceId =
   | 'fantasypros_week_projections'
   | 'nfl_schedule'
   | 'nfl_actuals'
-  | 'yahoo_access_check'
+  | 'db_backup'
   | 'yahoo_leagues'
   | 'yahoo_schedule'
   | 'yahoo_discover'
@@ -331,21 +286,6 @@ export interface DataScheduleRow {
   source: string
   scheduled: boolean
   next_run_at: string | null
-}
-
-export interface ImportRosterTeamResult {
-  team: string
-  created: boolean
-  added: number
-  removed: number
-  kept: number
-  lineup_set: boolean
-  unmatched: string[]
-}
-
-export interface ImportRosterPasteResponse {
-  teams: ImportRosterTeamResult[]
-  total_unmatched: number
 }
 
 export interface YahooStatus {
@@ -477,27 +417,3 @@ export interface PlayoffOddsResponse {
   teams: PlayoffOddsTeam[]
 }
 
-export type ManualMatchupStatus = string
-
-export interface ManualMatchup {
-  id: number
-  week: number
-  home_team_id: number
-  away_team_id: number
-  home_points: number | null
-  away_points: number | null
-  status: ManualMatchupStatus
-  home_team_name: string
-  away_team_name: string
-}
-
-export interface ManualMatchupInput {
-  home_team_id: number
-  away_team_id: number
-  home_points: number | null
-  away_points: number | null
-}
-
-export interface PutManualMatchupsPayload {
-  matchups: ManualMatchupInput[]
-}
