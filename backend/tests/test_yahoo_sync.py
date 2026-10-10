@@ -620,3 +620,125 @@ def test_discover_job_logs_under_registry_key(db_session, monkeypatch):
     monkeypatch.setattr(sync, "discover_leagues", lambda db: [])
     sync.discover_yahoo_leagues(db_session)
     assert db_session.query(SyncLog).filter_by(resource="yahoo_discover").one().status == "success"
+
+
+# --------------------------------------------------------------------------- #
+# Yahoo as the source of truth: departures and the daily prune
+# --------------------------------------------------------------------------- #
+
+
+def _status_by_name(db) -> dict[str, str]:
+    return {
+        player.full_name: lp.status
+        for lp, player in db.query(LeaguePlayer, Player).join(
+            Player, Player.id == LeaguePlayer.player_id
+        )
+    }
+
+
+def test_free_agent_sync_removes_players_yahoo_stopped_listing(db_session, league):
+    sync._sync_free_agents(
+        db_session, league, FakeLeague({"FA": [[_fa(1, "Alpha"), _fa(2, "Bravo")]], "W": []})
+    )
+
+    message = sync._sync_free_agents(
+        db_session, league, FakeLeague({"FA": [[_fa(1, "Alpha")]], "W": []})
+    )
+
+    assert _status_by_name(db_session) == {"Alpha": "FA"}
+    assert "1 no longer listed" in message
+
+
+def test_free_agent_sync_removes_nothing_after_a_truncated_pull(db_session, league, monkeypatch):
+    sync._sync_free_agents(
+        db_session, league, FakeLeague({"FA": [[_fa(1, "Alpha"), _fa(2, "Bravo")]], "W": []})
+    )
+    monkeypatch.setattr(sync, "MAX_PLAYER_PAGES", 1)
+    full_page = [_fa(i, f"Player {i}") for i in range(10, 10 + sync.PLAYERS_PER_PAGE)]
+
+    sync._sync_free_agents(db_session, league, FakeLeague({"FA": [full_page, full_page], "W": []}))
+
+    assert {"Alpha", "Bravo"} <= set(_status_by_name(db_session))
+
+
+class FakeRosterLeague:
+    def __init__(self, rosters: dict[str, list[dict] | Exception]) -> None:
+        self.rosters = rosters
+
+    def to_team(self, team_key):
+        roster = self.rosters[team_key]
+
+        class _Team:
+            def roster(self, week=None):
+                if isinstance(roster, Exception):
+                    raise roster
+                return roster
+
+        return _Team()
+
+
+def _slot(player_id: int, name: str, slot: str = "WR") -> dict:
+    return {**_fa(player_id, name), "selected_position": slot}
+
+
+def test_roster_sync_drops_players_on_no_roster(db_session, league, two_teams):
+    a, b = two_teams
+    sync._sync_rosters(
+        db_session,
+        league,
+        FakeRosterLeague({a.team_key: [_slot(1, "Keeper"), _slot(2, "Cut")], b.team_key: [_slot(3, "Other")]}),
+        week=1,
+    )
+
+    # "Cut" was dropped; "Other" was traded from B to A.
+    message = sync._sync_rosters(
+        db_session,
+        league,
+        FakeRosterLeague({a.team_key: [_slot(1, "Keeper"), _slot(3, "Other")], b.team_key: []}),
+        week=1,
+    )
+
+    on_team = {
+        player.full_name: lp.on_team_id
+        for lp, player in db_session.query(LeaguePlayer, Player).join(
+            Player, Player.id == LeaguePlayer.player_id
+        )
+    }
+    assert on_team == {"Keeper": a.id, "Other": a.id}
+    assert "1 dropped" in message
+
+
+def test_roster_sync_failure_drops_nobody(db_session, league, two_teams):
+    a, b = two_teams
+    sync._sync_rosters(
+        db_session,
+        league,
+        FakeRosterLeague({a.team_key: [_slot(1, "Keeper")], b.team_key: [_slot(2, "Other")]}),
+        week=1,
+    )
+
+    with pytest.raises(RuntimeError):
+        sync._sync_rosters(
+            db_session,
+            league,
+            FakeRosterLeague({a.team_key: [], b.team_key: RuntimeError("yahoo 500")}),
+            week=1,
+        )
+
+    assert set(_status_by_name(db_session)) == {"Keeper", "Other"}
+
+
+def test_daily_prune_removes_unreferenced_players(db_session, league, monkeypatch):
+    listed = Player(full_name="Listed", position="WR", yahoo_id="1")
+    gone = Player(full_name="Gone", position="WR", yahoo_id="2")
+    db_session.add_all([listed, gone])
+    db_session.flush()
+    db_session.add(LeaguePlayer(league_id=league.id, player_id=listed.id, status="FA"))
+    db_session.commit()
+
+    assert "skipped" in sync.prune_unreferenced_players(db_session)  # too few to trust
+    assert db_session.query(Player).count() == 2
+
+    monkeypatch.setattr(sync, "MIN_PLAYERS_FOR_PRUNE", 1)
+    assert "pruned 1" in sync.prune_unreferenced_players(db_session)
+    assert [p.full_name for p in db_session.query(Player).all()] == ["Listed"]

@@ -16,7 +16,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Iterator
 
 import yahoo_fantasy_api as yfa
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, or_, true
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -399,9 +399,17 @@ def _sync_teams(db: Session, league: League, lg) -> str:
 
 
 def _sync_rosters(db: Session, league: League, lg, week: int) -> str:
-    """Delete-and-replace roster slots for ``week``; also flag taken players."""
+    """Delete-and-replace roster slots for ``week``; also flag taken players.
+
+    Yahoo's rosters are the whole truth: once every team's roster has come
+    back, a player still marked taken in this league but on none of them was
+    dropped, and his row goes (the free-agent sync re-adds him if he lands on
+    waivers or in the free-agent pool). A failed team fetch raises before
+    that cleanup, so a Yahoo hiccup never empties a roster.
+    """
     teams = db.query(Team).filter(Team.league_id == league.id).all()
     slot_count = 0
+    rostered: set[int] = set()
 
     for team in teams:
         roster = lg.to_team(team.team_key).roster(week=week)
@@ -428,9 +436,22 @@ def _sync_rosters(db: Session, league: League, lg, week: int) -> str:
             _upsert_league_player(db, league.id, player, "T", on_team_id=team.id)
             slot_count += 1
 
+        rostered |= seen
         db.commit()
 
-    return f"{slot_count} roster slot(s) across {len(teams)} team(s)"
+    dropped = (
+        db.query(LeaguePlayer)
+        .filter(
+            LeaguePlayer.league_id == league.id,
+            LeaguePlayer.on_team_id.isnot(None),
+            LeaguePlayer.player_id.notin_(rostered) if rostered else true(),
+        )
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+
+    message = f"{slot_count} roster slot(s) across {len(teams)} team(s)"
+    return message + (f"; {dropped} dropped" if dropped else "")
 
 
 def _parse_matchups(raw: dict) -> list[dict]:
@@ -637,9 +658,19 @@ def _iter_player_pages(lg, status: str) -> Iterator[list[dict]]:
 
 
 def _sync_free_agents(db: Session, league: League, lg) -> str:
+    """Upsert the league's free-agent and waiver lists.
+
+    After a complete pull, entries Yahoo no longer lists (signed elsewhere,
+    retired, out of the pool) are removed. A pull that hit the page cap may
+    be truncated, so it removes nothing.
+    """
     total = 0
+    listed: set[int] = set()
+    complete = True
     for status in ("FA", "W"):
+        pages = 0
         for page in _iter_player_pages(lg, status):
+            pages += 1
             for entry in page:
                 player = _get_or_create_player(db, entry)
                 _upsert_league_player(
@@ -650,9 +681,25 @@ def _sync_free_agents(db: Session, league: League, lg) -> str:
                     percent_owned=_to_float(entry.get("percent_owned")),
                     on_team_id=None,
                 )
+                listed.add(player.id)
                 total += 1
             db.commit()
-    return f"{total} available player(s)"
+        complete = complete and pages < MAX_PLAYER_PAGES
+
+    removed = 0
+    if complete:
+        removed = (
+            db.query(LeaguePlayer)
+            .filter(
+                LeaguePlayer.league_id == league.id,
+                LeaguePlayer.status.in_(("FA", "W")),
+                LeaguePlayer.player_id.notin_(listed) if listed else true(),
+            )
+            .delete(synchronize_session=False)
+        )
+        db.commit()
+    message = f"{total} available player(s)"
+    return message + (f"; {removed} no longer listed" if removed else "")
 
 
 def _resolve_missing_players(db: Session, lg, yahoo_ids: list[int]) -> None:
@@ -970,7 +1017,30 @@ def sync_yahoo_schedule(db: Session) -> str:
         finally:
             sc.close()
 
-    return _for_each_yahoo_league(db, "yahoo_schedule", one)
+    message = _for_each_yahoo_league(db, "yahoo_schedule", one)
+    return message + prune_unreferenced_players(db)
+
+
+#: Fewer referenced players than this means the league data looks wrong
+#: (nothing synced yet, or a broken pull), so the daily prune stands down.
+MIN_PLAYERS_FOR_PRUNE = 100
+
+
+def prune_unreferenced_players(db: Session) -> str:
+    """Delete players no Yahoo pull references any more (daily, see
+    :func:`app.services.player_merge.players_outside_yahoo`)."""
+    from app.services import player_merge
+
+    outside = player_merge.players_outside_yahoo(db)
+    if not outside:
+        return ""
+    referenced = db.query(Player).count() - len(outside)
+    if referenced < MIN_PLAYERS_FOR_PRUNE:
+        logger.warning("prune skipped: only %d referenced players", referenced)
+        return f" | prune skipped ({referenced} referenced players)"
+    counts = player_merge.prune_players(db, outside)
+    db.commit()
+    return f" | pruned {counts['players']} unreferenced player(s)"
 
 
 def discover_yahoo_leagues(db: Session) -> str:
