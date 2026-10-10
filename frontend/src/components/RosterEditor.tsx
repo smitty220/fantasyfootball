@@ -423,25 +423,34 @@ export function RosterEditor({
   }
 
   function renderPlayerCells(player: LineupPlayer, benchUpgrade?: LineupPlayer | null) {
+    const faChips = renderFaChips(player)
+    const hasFlags = Boolean(player.injury_status || benchUpgrade || faChips)
     return (
       <>
         <span className="lineup-row-pos">{player.position}</span>
         <span className="lineup-row-name">
-          <span className="lineup-row-name-text">{player.full_name}</span>
-          {player.injury_status && (
-            <Badge tone="warning">{player.injury_status}</Badge>
-          )}
-          {benchUpgrade && (
-            <span
-              className="bench-alert-chip"
-              title={`Bench player ${benchUpgrade.full_name} projects ${benchUpgrade.week_points!.toFixed(
-                1,
-              )} pts this week — consider swapping`}
-            >
-              ▼ bench
+          <span className="lineup-row-name-text" title={player.full_name}>
+            {player.full_name}
+          </span>
+          {/* Flags sit on their own line so they never squeeze the name. */}
+          {hasFlags && (
+            <span className="lineup-row-flags">
+              {player.injury_status && (
+                <Badge tone="warning">{player.injury_status}</Badge>
+              )}
+              {benchUpgrade && (
+                <span
+                  className="bench-alert-chip"
+                  title={`Bench player ${benchUpgrade.full_name} projects ${benchUpgrade.week_points!.toFixed(
+                    1,
+                  )} pts this week — consider swapping`}
+                >
+                  ▼ bench
+                </span>
+              )}
+              {faChips}
             </span>
           )}
-          {renderFaChips(player)}
         </span>
         <span className="lineup-row-team">{player.nfl_team || 'FA'}</span>
         <span className="lineup-row-opp">
